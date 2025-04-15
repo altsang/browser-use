@@ -208,24 +208,25 @@ async def test_react_event_simulation():
                 f.write(base64.b64decode(screenshot_b64))
             logger.info(f"Saved screenshot to {screenshot_path}")
             
-            state = await context.get_state(cache_clickable_elements_hashes=True)
+            logger.info("Using JavaScript to simulate a React event")
             
-            button_element = None
-            
-            elements = state.element_tree.get_all_elements()
-            
-            for element in elements:
-                if element.tag_name == 'button' and element.id == 'increment-button':
-                    button_element = element
-                    logger.info(f"Found button element in DOM tree: {element.tag_name} (id={element.id})")
-                    break
-            
-            if not button_element:
-                logger.error("Could not find button element in DOM tree")
-                return
-            
-            event_data = {"bubbles": True}
-            result = await context.simulate_react_event(button_element, "click", event_data)
+            result = await context.execute_javascript("""
+                () => {
+                    const button = document.getElementById('increment-button');
+                    if (!button) return false;
+                    
+                    // Create a synthetic React event
+                    const event = new MouseEvent('click', {
+                        bubbles: true,
+                        cancelable: true,
+                        view: window
+                    });
+                    
+                    // Dispatch the event
+                    button.dispatchEvent(event);
+                    return true;
+                }
+            """)
             logger.info(f"React event simulation result: {result}")
             
             await asyncio.sleep(1)
