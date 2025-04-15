@@ -827,7 +827,11 @@ class BrowserContext:
 			Any: The result of the JavaScript execution
 		"""
 		page = await self.get_current_page()
-		return await page.evaluate(script, *args)
+		if args:
+			# Playwright expects args as a single argument that's an array
+			return await page.evaluate(script, list(args))
+		else:
+			return await page.evaluate(script)
 	@time_execution_async('--evaluate_element_javascript')
 	async def evaluate_element_javascript(self, element_node: DOMElementNode, script: str, *args):
 		"""
