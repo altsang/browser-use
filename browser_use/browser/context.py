@@ -815,10 +815,19 @@ class BrowserContext:
 		page = await self.get_current_page()
 		return await page.content()
 
-	async def execute_javascript(self, script: str):
-		"""Execute JavaScript code on the page"""
+	async def execute_javascript(self, script: str, *args):
+		"""
+		Execute JavaScript code on the page with optional arguments
+		
+		Args:
+			script (str): JavaScript code to execute
+			*args: Optional arguments to pass to the JavaScript function
+			
+		Returns:
+			The result of the JavaScript execution
+		"""
 		page = await self.get_current_page()
-		return await page.evaluate(script)
+		return await page.evaluate(script, *args)
 
 	async def get_page_structure(self) -> str:
 		"""Get a debug view of the page structure including iframes"""
@@ -1783,31 +1792,140 @@ class BrowserContext:
 		page = await self.get_current_page()
 		
 		if frame_path is None or not frame_path:
+			logger.info(f"Searching for selector '{selector}' in main frame")
 			return await page.query_selector(selector)
 			
 		try:
 			# Start with main frame
 			current_frame = page.main_frame
+			logger.info(f"Starting frame traversal with path {frame_path}")
 			
-			for idx in frame_path:
-				if idx < 0 or idx >= len(current_frame.child_frames):
-					logger.error(f"Invalid frame index {idx} in path {frame_path}")
-					return None
-					
-				current_frame = current_frame.child_frames[idx]
+			try:
+				frames = page.frames
+				logger.info(f"Found {len(frames)} frames on the page")
 				
+				# If we have a simple path like [0], try direct access
+				if len(frame_path) == 1 and frame_path[0] < len(frames):
+					logger.info(f"Using direct frame access for path {frame_path}")
+					current_frame = frames[frame_path[0]]
+				else:
+					for i, idx in enumerate(frame_path):
+						child_frames = current_frame.child_frames
+						logger.info(f"Frame at level {i} has {len(child_frames)} child frames")
+						
+						if idx < 0 or idx >= len(child_frames):
+							logger.warning(f"Invalid frame index {idx} in path {frame_path} at level {i}")
+							continue
+							
+						current_frame = child_frames[idx]
+						logger.info(f"Traversed to frame at index {idx}, URL: {current_frame.url}")
+			except Exception as e:
+				logger.warning(f"Error during frame traversal: {str(e)}, trying JavaScript approach")
+				
+				# Fallback to JavaScript approach
+				result = await self.execute_javascript("""
+					(selector, framePath) => {
+						try {
+							console.log(`Searching for selector '${selector}' using JavaScript in frame path ${JSON.stringify(framePath)}`);
+							
+							// Get all frames
+							const frames = Array.from(document.querySelectorAll('iframe'));
+							console.log(`Found ${frames.length} iframes on the page`);
+							
+							// Try to find the element in each frame
+							for (let i = 0; i < frames.length; i++) {
+								try {
+									const frame = frames[i];
+									console.log(`Checking frame ${i}: ${frame.src}`);
+									
+									// Try to access the frame content
+									const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+									if (!frameDoc) {
+										console.log(`Cannot access frame ${i} content (likely cross-origin)`);
+										continue;
+									}
+									
+									// Look for the element
+									const elements = frameDoc.querySelectorAll(selector);
+									if (elements.length > 0) {
+										console.log(`Found ${elements.length} elements matching '${selector}' in frame ${i}`);
+										
+										// Get element position
+										const rect = elements[0].getBoundingClientRect();
+										const frameRect = frame.getBoundingClientRect();
+										
+										return {
+											found: true,
+											frameIndex: i,
+											elementCount: elements.length,
+											position: {
+												x: frameRect.left + rect.left + (rect.width / 2),
+												y: frameRect.top + rect.top + (rect.height / 2)
+											}
+										};
+									}
+								} catch (frameError) {
+									console.log(`Error accessing frame ${i}: ${frameError.message}`);
+								}
+							}
+							
+							return { found: false };
+						} catch (error) {
+							console.error(`JavaScript frame search error: ${error.message}`);
+							return { found: false, error: error.message };
+						}
+					}
+				""", selector, frame_path)
+				
+				if result and result.get('found', False):
+					logger.info(f"Found element via JavaScript in frame {result.get('frameIndex')}")
+					
+					position = result.get('position', {})
+					x = position.get('x', 0)
+					y = position.get('y', 0)
+					
+					if x > 0 and y > 0:
+						logger.info(f"Clicking at position ({x}, {y}) based on JavaScript results")
+						await page.mouse.click(x, y)
+						return None  # We've already clicked, so no need to return an element
+			
+			# Try to find the element in the current frame
+			logger.info(f"Searching for selector '{selector}' in frame: {current_frame.url}")
 			element = await current_frame.query_selector(selector)
+			
 			if element:
+				logger.info(f"Found element with selector '{selector}'")
 				try:
 					is_hidden = await element.is_hidden()
 					if not is_hidden:
 						await element.scroll_into_view_if_needed()
+						logger.info("Element is visible and scrolled into view")
+					else:
+						logger.warning("Element is hidden")
 				except Exception as e:
 					logger.warning(f"Could not check visibility or scroll element into view: {str(e)}")
+			else:
+				logger.warning(f"No element found with selector '{selector}' in frame: {current_frame.url}")
+				
+				all_frames = page.frames
+				logger.info(f"Trying to find element in all {len(all_frames)} frames")
+				
+				for i, frame in enumerate(all_frames):
+					try:
+						logger.info(f"Checking frame {i}: {frame.url}")
+						element = await frame.query_selector(selector)
+						if element:
+							logger.info(f"Found element in frame {i}")
+							current_frame = frame
+							break
+					except Exception as frame_error:
+						logger.warning(f"Error checking frame {i}: {str(frame_error)}")
 					
 			return element
 		except Exception as e:
 			logger.error(f"Failed to locate element in nested frame: {str(e)}")
+			import traceback
+			logger.error(traceback.format_exc())
 			return None
 			
 	@time_execution_async('--find_frame_by_url_pattern')
@@ -1824,131 +1942,782 @@ class BrowserContext:
 		    Optional[dict]: Frame information with added 'found_path' if found, None otherwise.
 		"""
 		import re
-		frames = await self.get_nested_frames()
+		logger.info(f"Looking for frame with URL pattern: {url_pattern}")
 		
-		def search_frames(frames_list, pattern, path=None):
-			if path is None:
-				path = []
-				
-			for i, frame in enumerate(frames_list):
-				# Check if this frame matches the pattern
-				if re.search(pattern, frame['url']):
-					frame['found_path'] = path + [i]
-					return frame
-					
-				current_path = path + [i]
-				for j, child_frame in enumerate(frame.get('child_frames', [])):
-					result = search_frames([child_frame], pattern, current_path)
-					if result:
-						return result
-						
-			return None
+		page = await self.get_current_page()
+		all_frames = page.frames
+		logger.info(f"Found {len(all_frames)} frames on the page")
+		
+		# Check if any top-level frame matches
+		for i, frame in enumerate(all_frames):
+			try:
+				if re.search(url_pattern, frame.url):
+					logger.info(f"Found matching frame at index {i}: {frame.url}")
+					return {
+						'url': frame.url,
+						'name': frame.name,
+						'found_path': [i],
+						'depth': 0
+					}
+			except Exception as e:
+				logger.warning(f"Error checking frame {i}: {str(e)}")
+		
+		try:
+			frames = await self.get_nested_frames()
+			logger.info(f"Found {len(frames)} frames via get_nested_frames")
 			
-		return search_frames(frames, url_pattern)
+			def search_frames(frames_list, pattern, path=None):
+				if path is None:
+					path = []
+					
+				for i, frame in enumerate(frames_list):
+					# Check if this frame matches the pattern
+					try:
+						if re.search(pattern, frame['url']):
+							frame['found_path'] = path + [i]
+							logger.info(f"Found matching frame with path {frame['found_path']}: {frame['url']}")
+							return frame
+					except Exception as e:
+						logger.warning(f"Error matching pattern on frame: {str(e)}")
+						
+					current_path = path + [i]
+					for j, child_frame in enumerate(frame.get('child_frames', [])):
+						result = search_frames([child_frame], pattern, current_path)
+						if result:
+							return result
+							
+				return None
+				
+			result = search_frames(frames, url_pattern)
+			if result:
+				return result
+		except Exception as e:
+			logger.error(f"Error in nested frame search: {str(e)}")
+			import traceback
+			logger.error(traceback.format_exc())
+		
+		# If still no match, try JavaScript approach
+		try:
+			logger.info("Trying JavaScript approach to find frame")
+			js_result = await self.execute_javascript("""
+				(pattern) => {
+					try {
+						const regex = new RegExp(pattern);
+						const frames = Array.from(document.querySelectorAll('iframe'));
+						console.log(`Found ${frames.length} iframes on the page`);
+						
+						// Check top-level frames
+						for (let i = 0; i < frames.length; i++) {
+							const frame = frames[i];
+							console.log(`Checking frame ${i}: ${frame.src}`);
+							
+							if (regex.test(frame.src)) {
+								console.log(`Found matching frame at index ${i}: ${frame.src}`);
+								return {
+									found: true,
+									index: i,
+									url: frame.src,
+									path: [i]
+								};
+							}
+							
+							// Try to check nested frames if possible
+							try {
+								const frameDoc = frame.contentDocument || frame.contentWindow?.document;
+								if (!frameDoc) {
+									console.log(`Cannot access frame ${i} content (likely cross-origin)`);
+									continue;
+								}
+								
+								const nestedFrames = Array.from(frameDoc.querySelectorAll('iframe'));
+								console.log(`Frame ${i} has ${nestedFrames.length} nested frames`);
+								
+								for (let j = 0; j < nestedFrames.length; j++) {
+									const nestedFrame = nestedFrames[j];
+									console.log(`Checking nested frame ${j} in frame ${i}: ${nestedFrame.src}`);
+									
+									if (regex.test(nestedFrame.src)) {
+										console.log(`Found matching nested frame at path [${i}, ${j}]: ${nestedFrame.src}`);
+										return {
+											found: true,
+											index: j,
+											parentIndex: i,
+											url: nestedFrame.src,
+											path: [i, j]
+										};
+									}
+								}
+							} catch (frameError) {
+								console.log(`Error accessing frame ${i} content: ${frameError.message}`);
+							}
+						}
+						
+						return { found: false };
+					} catch (error) {
+						console.error(`JavaScript frame search error: ${error.message}`);
+						return { found: false, error: error.message };
+					}
+				}
+			""", url_pattern)
+			
+			if js_result and js_result.get('found', False):
+				logger.info(f"Found frame via JavaScript: {js_result.get('url')} with path {js_result.get('path')}")
+				return {
+					'url': js_result.get('url'),
+					'name': 'js_found_frame',
+					'found_path': js_result.get('path'),
+					'depth': len(js_result.get('path', []))
+				}
+		except Exception as e:
+			logger.error(f"Error in JavaScript frame search: {str(e)}")
+		
+		logger.warning(f"No frame found matching pattern: {url_pattern}")
+		return None
 		
 	@time_execution_async('--find_naver_maps_photos_frame')
 	async def find_naver_maps_photos_frame(self) -> Optional[dict]:
 		"""
 		Specifically designed to find the photos iframe in Naver Maps restaurant listings.
-		Returns the frame information if found.
-		
-		This method avoids the pcmap.place.naver.com frame as mentioned in the requirements
-		and focuses on finding the frame that contains the photo gallery.
+		This method searches for frames that contain photo-related content.
 		
 		Returns:
-		    Optional[dict]: Frame information with path if found, None otherwise.
+			Optional[dict]: Information about the found frame, including path and URL,
+				or None if no suitable frame was found.
 		"""
 		import re
+		from browser_use.utils.naver_maps import is_naver_maps_url
+		
 		page = await self.get_current_page()
-		if not re.search(r'map\.naver\.com', page.url):
+		if not is_naver_maps_url(page.url):
 			logger.warning("Not on a Naver Maps page")
 			return None
 			
-		# Try to find the photos frame - avoid the pcmap.place.naver.com frame
+		photo_patterns = [
+			r'photo',
+			r'gallery',
+			r'image',
+			r'media',
+			r'사진',  # Korean for "photo"
+		]
 		
+		main_frame_patterns = [
+			r'pcmap\.place\.naver\.com',  # Main content frame that contains photos
+			r'map\.naver\.com',
+			r'place.*\.naver\.com',
+		]
+		
+		if re.search(r'pcmap\.place\.naver\.com/restaurant/\d+', page.url, re.IGNORECASE):
+			logger.info(f"Already on a content frame: {page.url}")
+			return {
+				'url': page.url,
+				'name': 'content_frame',
+				'depth': 0,
+				'path': [],
+				'found_path': [],
+				'child_frames': []
+			}
+		
+		# Try to find the photos frame first using direct pattern
 		photo_frame = await self.find_frame_by_url_pattern(r'photo.*\.naver\.com')
 		if photo_frame:
 			return photo_frame
 			
+		# Try to find pcmap.place.naver.com frame which contains restaurant content
+		content_frame = await self.find_frame_by_url_pattern(r'pcmap\.place\.naver\.com/restaurant')
+		if content_frame:
+			logger.info(f"Found content frame: {content_frame.get('url')}")
+			return content_frame
+			
 		frames = await self.get_nested_frames()
+		logger.info(f"Found {len(frames)} frames at top level")
 		
-		def search_for_photo_frame(frames_list, path=None):
+		async def search_for_photo_frame(frames_list, path=None):
 			if path is None:
 				path = []
 				
 			for i, frame in enumerate(frames_list):
+				frame_url = frame.get('url', '')
 				current_path = path + [i]
 				
-				if re.search(r'pcmap\.place\.naver\.com', frame['url']):
-					continue
-					
-				if (re.search(r'place.*\.naver\.com', frame['url']) or 
-					re.search(r'map.*\.naver\.com', frame['url'])):
-					# Check if this frame has Korean text that might indicate photos
-					if frame.get('hasKoreanText'):
+				if re.search(r'pcmap\.place\.naver\.com', frame_url, re.IGNORECASE):
+					logger.info(f"Found pcmap frame at path {current_path}: {frame_url}")
+					frame['found_path'] = current_path
+					return frame
+			
+			for pattern in main_frame_patterns:
+				for i, frame in enumerate(frames_list):
+					frame_url = frame.get('url', '')
+					if re.search(pattern, frame_url, re.IGNORECASE):
+						current_path = path + [i]
+						
+						# Check if this frame has photo content directly
+						for photo_pattern in photo_patterns:
+							if re.search(photo_pattern, frame_url, re.IGNORECASE):
+								logger.info(f"Found photo pattern in frame: {photo_pattern}")
+								frame['found_path'] = current_path
+								return frame
+								
+						# Check if this frame has Korean text that might indicate photos
+						if frame.get('hasKoreanText'):
+							logger.info(f"Found frame with Korean text at path {current_path}")
+							frame['found_path'] = current_path
+							return frame
+							
+						# Check child frames of this main frame
+						if frame.get('child_frames'):
+							logger.info(f"Checking {len(frame.get('child_frames'))} child frames")
+							child_result = await search_for_photo_frame(frame['child_frames'], current_path)
+							if child_result:
+								return child_result
+			
+			for i, frame in enumerate(frames_list):
+				current_path = path + [i]
+				frame_url = frame.get('url', '')
+				
+				for pattern in photo_patterns:
+					if re.search(pattern, frame_url, re.IGNORECASE):
+						logger.info(f"Found photo pattern in frame: {pattern}")
 						frame['found_path'] = current_path
 						return frame
 						
-				for j, child_frame in enumerate(frame.get('child_frames', [])):
-					result = search_for_photo_frame([child_frame], current_path)
+				# Recursively search child frames
+				if frame.get('child_frames'):
+					result = await search_for_photo_frame(frame['child_frames'], current_path)
 					if result:
 						return result
 						
 			return None
 			
-		return search_for_photo_frame(frames)
+		return await search_for_photo_frame(frames)
 	@time_execution_async('--find_element_by_korean_text')
 	async def find_element_by_korean_text(self, text: str, frame_path: Optional[list[int]] = None) -> Optional[ElementHandle]:
 		"""
-		Find an element by Korean text in a specific frame.
+		Find an element by Korean text in a specific frame or across all accessible frames.
 		Useful for navigating Naver Maps UI which uses Korean text as stable identifiers
 		rather than DOM IDs which change dynamically as an anti-bot measure.
 		
 		Args:
 		    text (str): The Korean text to search for
 		    frame_path (list[int], optional): The path to the frame to search in.
-		        If None, searches in the main frame.
+		        If None, searches in all accessible frames.
 		        
 		Returns:
 		    Optional[ElementHandle]: The element handle if found, None otherwise.
 		"""
-		page = await self.get_current_page()
-		
-		selector = f'text="{text}"'
-		
-		if frame_path is None or not frame_path:
+		try:
+			import asyncio
+			import os
+			from pathlib import Path
+			import base64
+			
+			screenshot_dir = Path("/tmp/naver_test")
+			screenshot_dir.mkdir(exist_ok=True)
+			
+			page = await self.get_current_page()
+			selector = f'text="{text}"'
+			
+			logger.info(f"Looking for Korean text '{text}' in frames")
+			
+			screenshot_path = screenshot_dir / f"korean_text_search_{text.replace(' ', '_')}_before.png"
+			screenshot_b64 = await self.take_screenshot(full_page=True)
+			with open(screenshot_path, "wb") as f:
+				f.write(base64.b64decode(screenshot_b64))
+			
+			content_frame = await self.find_frame_by_url_pattern(r'pcmap\.place\.naver\.com')
+			if content_frame:
+				content_frame_path = content_frame.get('found_path', [])
+				logger.info(f"Found content frame at path {content_frame_path}")
+				
+				try:
+					element = await self.get_element_in_nested_frame(selector, content_frame_path)
+					if element:
+						try:
+							await element.scroll_into_view_if_needed()
+						except Exception as e:
+							logger.warning(f"Could not scroll element into view: {str(e)}")
+						logger.info(f"Found Korean text '{text}' in content frame")
+						return element
+				except Exception as e:
+					logger.warning(f"Failed to locate element by Korean text in content frame: {str(e)}")
+					# Continue with other search methods
+			
+			if frame_path is not None and frame_path:
+				try:
+					logger.info(f"Trying to find Korean text '{text}' in specified frame path {frame_path}")
+					element = await self.get_element_in_nested_frame(selector, frame_path)
+					if element:
+						try:
+							await element.scroll_into_view_if_needed()
+						except Exception as e:
+							logger.warning(f"Could not scroll element into view: {str(e)}")
+						logger.info(f"Found Korean text '{text}' in specified frame path {frame_path}")
+						return element
+				except Exception as e:
+					logger.warning(f"Failed to locate element by Korean text in specified frame: {str(e)}")
+					# Continue with other search methods
+			
 			# Search in main frame
 			try:
+				logger.info(f"Trying to find Korean text '{text}' in main frame")
 				element = await page.query_selector(selector)
 				if element:
 					try:
 						await element.scroll_into_view_if_needed()
 					except Exception as e:
 						logger.warning(f"Could not scroll element into view: {str(e)}")
-				return element
+					logger.info(f"Found Korean text '{text}' in main frame")
+					return element
 			except Exception as e:
-				logger.error(f"Failed to locate element by Korean text in main frame: {str(e)}")
-				return None
-		
-		try:
-			# Start with main frame
-			current_frame = page.main_frame
+				logger.debug(f"Failed to locate element by Korean text in main frame: {str(e)}")
+				# Continue with other search methods
 			
-			for idx in frame_path:
-				if idx < 0 or idx >= len(current_frame.child_frames):
-					logger.error(f"Invalid frame index {idx} in path {frame_path}")
-					return None
-					
-				current_frame = current_frame.child_frames[idx]
+			# Get all frames and search in each one
+			try:
+				frames = await self.get_nested_frames()
+				logger.info(f"Searching through {len(frames)} frames for Korean text '{text}'")
 				
-			element = await current_frame.query_selector(selector)
-			if element:
-				try:
-					await element.scroll_into_view_if_needed()
-				except Exception as e:
-					logger.warning(f"Could not scroll element into view: {str(e)}")
-					
-			return element
-		except Exception as e:
-			logger.error(f"Failed to locate element by Korean text: {str(e)}")
+				for frame_info in frames:
+					frame_url = frame_info.get('url', '')
+					if 'pcmap.place.naver.com' in frame_url:
+						try:
+							current_path = frame_info.get('path', [])
+							if not current_path:
+								logger.warning(f"Frame has no path: {frame_url}")
+								continue
+								
+							logger.info(f"Checking pcmap frame at path {current_path}")
+							try:
+								element = await self.get_element_in_nested_frame(selector, current_path)
+								if element:
+									try:
+										await element.scroll_into_view_if_needed()
+									except Exception as e:
+										logger.warning(f"Could not scroll element into view: {str(e)}")
+									logger.info(f"Found Korean text '{text}' in pcmap frame at path {current_path}")
+									return element
+							except Exception as e:
+								logger.warning(f"Error in get_element_in_nested_frame: {str(e)}")
+						except Exception as frame_error:
+							logger.debug(f"Error searching in pcmap frame {frame_url}: {str(frame_error)}")
+							continue
+				
+				for frame_info in frames:
+					try:
+						current_path = frame_info.get('path', [])
+						if not current_path:
+							logger.warning(f"Frame has no path: {frame_info.get('url', 'unknown')}")
+							continue
+							
+						logger.info(f"Checking frame at path {current_path}: {frame_info.get('url', 'unknown')}")
+						try:
+							element = await self.get_element_in_nested_frame(selector, current_path)
+							if element:
+								try:
+									await element.scroll_into_view_if_needed()
+								except Exception as e:
+									logger.warning(f"Could not scroll element into view: {str(e)}")
+								logger.info(f"Found Korean text '{text}' in frame path {current_path}")
+								return element
+						except Exception as e:
+							logger.warning(f"Error in get_element_in_nested_frame: {str(e)}")
+					except Exception as frame_error:
+						logger.debug(f"Error searching in frame: {str(frame_error)}")
+						continue
+			except Exception as e:
+				logger.error(f"Error getting nested frames: {str(e)}")
+				import traceback
+				logger.error(traceback.format_exc())
+			
+			# Try direct frame access using page.frames
+			try:
+				all_frames = page.frames
+				logger.info(f"Trying direct frame access with {len(all_frames)} frames")
+				
+				for i, frame in enumerate(all_frames):
+					try:
+						logger.info(f"Checking frame {i} directly: {frame.url}")
+						element = await frame.query_selector(selector)
+						if element:
+							try:
+								await element.scroll_into_view_if_needed()
+							except Exception as e:
+								logger.warning(f"Could not scroll element into view: {str(e)}")
+							logger.info(f"Found Korean text '{text}' in direct frame {i}")
+							return element
+					except Exception as e:
+						logger.debug(f"Error searching in direct frame {i}: {str(e)}")
+						continue
+			except Exception as e:
+				logger.error(f"Error accessing direct frames: {str(e)}")
+			
+			logger.info(f"Trying JavaScript approach to find Korean text '{text}'")
+			try:
+				result = await self.execute_javascript(
+					"""
+					(text) => {
+						console.log(`Searching for Korean text: "${text}"`);
+						
+						// Function to recursively find text in a document and all its accessible frames
+						function findTextInDocument(doc, results = [], frameInfo = {}, depth = 0) {
+							if (!doc || !doc.body || depth > 3) return results;
+							
+							console.log(`Searching in document at depth ${depth}: ${doc.location.href}`);
+							
+							// Check for text in current document
+							const walker = doc.createTreeWalker(
+								doc.body || doc.documentElement,
+								NodeFilter.SHOW_TEXT,
+								null,
+								false
+							);
+							
+							let node;
+							while (node = walker.nextNode()) {
+								if (node.textContent.includes(text)) {
+									const parentElement = node.parentElement;
+									console.log(`Found text "${text}" in element: ${parentElement.tagName}`);
+									
+									results.push({
+										found: true,
+										frameUrl: doc.location.href,
+										elementInfo: {
+											tagName: parentElement.tagName,
+											className: parentElement.className,
+											id: parentElement.id,
+											text: node.textContent,
+											rect: parentElement.getBoundingClientRect ? {
+												top: parentElement.getBoundingClientRect().top,
+												left: parentElement.getBoundingClientRect().left,
+												width: parentElement.getBoundingClientRect().width,
+												height: parentElement.getBoundingClientRect().height
+											} : null
+										}
+									});
+									
+									// Try to click the element to bring it into view
+									try {
+										console.log(`Scrolling element into view`);
+										parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+										setTimeout(() => {
+											try {
+												console.log(`Clicking element`);
+												parentElement.click();
+											} catch (e) {
+												console.log(`Click failed: ${e.message}`);
+											}
+										}, 500);
+									} catch (e) {
+										console.log(`ScrollIntoView failed: ${e.message}`);
+									}
+									
+									return results;
+								}
+							}
+							
+							// Check all accessible frames
+							try {
+								const frames = Array.from(doc.querySelectorAll('iframe'));
+								console.log(`Found ${frames.length} frames in document`);
+								
+								for (let i = 0; i < frames.length; i++) {
+									const frame = frames[i];
+									console.log(`Checking frame ${i}: ${frame.src}`);
+									
+									try {
+										if (frame.contentDocument) {
+											const frameUrl = frame.contentDocument.location.href;
+											console.log(`Frame ${i} is accessible: ${frameUrl}`);
+											const frameResults = findTextInDocument(
+												frame.contentDocument, 
+												[], 
+												{ url: frameUrl, index: i }, 
+												depth + 1
+											);
+											
+											if (frameResults.length > 0) {
+												return frameResults;
+											}
+										}
+									} catch (e) {
+										// Cross-origin frame access error
+										console.log(`Cross-origin frame access error for frame ${i}: ${frame.src}`);
+										results.push({
+											found: false,
+											frameUrl: frame.src,
+											error: 'Cross-origin restriction'
+										});
+									}
+								}
+							} catch (e) {
+								// Iframe access error
+								console.log(`Iframe access error: ${e.toString()}`);
+								results.push({
+									found: false,
+									error: e.toString(),
+									frameInfo
+								});
+							}
+							
+							return results;
+						}
+						
+						const results = findTextInDocument(document);
+						console.log(`Search results: ${JSON.stringify(results)}`);
+						return results;
+					}
+					""",
+					text
+				)
+				
+				if result and isinstance(result, list):
+					found_results = [item for item in result if item.get('found', False)]
+					if found_results:
+						logger.info(f"Found Korean text '{text}' via JavaScript in frame: {found_results[0].get('frameUrl')}")
+						
+						await asyncio.sleep(2)  # Give more time for the JS click to take effect
+						
+						# Take a screenshot after JavaScript click
+						screenshot_path = screenshot_dir / f"korean_text_search_{text.replace(' ', '_')}_after_js.png"
+						screenshot_b64 = await self.take_screenshot(full_page=True)
+						with open(screenshot_path, "wb") as f:
+							f.write(base64.b64decode(screenshot_b64))
+						
+						# Try to find the element again after the JavaScript click
+						element = await page.query_selector(selector)
+						if element:
+							logger.info(f"Found element after JavaScript click")
+							return element
+						
+						try:
+							if found_results[0].get('elementInfo', {}).get('rect'):
+								rect = found_results[0]['elementInfo']['rect']
+								x = rect['left'] + rect['width'] / 2
+								y = rect['top'] + rect['height'] / 2
+								
+								logger.info(f"Clicking at coordinates ({x}, {y}) based on JavaScript results")
+								await page.mouse.click(x, y)
+								await asyncio.sleep(1)
+								
+								screenshot_path = screenshot_dir / f"korean_text_search_{text.replace(' ', '_')}_after_coords.png"
+								screenshot_b64 = await self.take_screenshot(full_page=True)
+								with open(screenshot_path, "wb") as f:
+									f.write(base64.b64decode(screenshot_b64))
+								
+								# Try one more time to find the element
+								element = await page.query_selector(selector)
+								if element:
+									logger.info(f"Found element after coordinate click")
+									return element
+						except Exception as e:
+							logger.warning(f"Failed to click using coordinates: {str(e)}")
+			except Exception as e:
+				logger.error(f"Error in JavaScript approach: {str(e)}")
+				import traceback
+				logger.error(traceback.format_exc())
+			
+			try:
+				logger.info(f"Trying partial text match for '{text}'")
+				partial_selector = f"*:has-text('{text}')"
+				element = await page.query_selector(partial_selector)
+				if element:
+					logger.info(f"Found element with partial text match")
+					return element
+			except Exception as e:
+				logger.warning(f"Failed to find element with partial text match: {str(e)}")
+			
+			logger.warning(f"Could not find Korean text '{text}' in any frame")
 			return None
+			
+		except Exception as e:
+			logger.error(f"Error finding element by Korean text: {str(e)}")
+			import traceback
+			logger.error(traceback.format_exc())
+			return None
+			
+	@time_execution_async('--find_and_click_naver_photo')
+	async def find_and_click_naver_photo(self, category: Optional[str] = None) -> bool:
+		"""
+		Find and click a photo in Naver Maps restaurant listings.
+		
+		This method is specifically designed to handle the complex iframe structure of Naver Maps,
+		where photos are often nested in multiple layers of iframes with cross-origin restrictions.
+		
+		Args:
+			category (str, optional): The category to look for ("내부" for interior, "외부" for exterior).
+				If None, clicks any available photo.
+				
+		Returns:
+			bool: True if a photo was successfully clicked, False otherwise.
+		"""
+		try:
+			import asyncio
+			from browser_use.utils.naver_maps import wait_times
+			
+			wait_time_config = wait_times()
+			
+			logger.info("Looking for photos tab ('사진')...")
+			photos_element = await self.find_element_by_korean_text("사진")
+			
+			if photos_element:
+				logger.info("Found photos tab, clicking it...")
+				await photos_element.click()
+				await asyncio.sleep(wait_time_config['photos_tab_click'] / 1000)  # Wait for photos to load
+				
+				screenshot_path = "/tmp/naver_test/after_photos_tab_click.png"
+				screenshot_b64 = await self.take_screenshot(full_page=False)
+				
+				import base64
+				import os
+				os.makedirs("/tmp/naver_test", exist_ok=True)
+				with open(screenshot_path, "wb") as f:
+					f.write(base64.b64decode(screenshot_b64))
+				logger.info(f"Saved screenshot to {screenshot_path}")
+			else:
+				logger.warning("Could not find photos tab, trying to continue...")
+				
+			if category:
+				logger.info(f"Looking for category '{category}'...")
+				category_element = await self.find_element_by_korean_text(category)
+				if category_element:
+					logger.info(f"Found category '{category}', clicking it...")
+					await category_element.click()
+					await asyncio.sleep(wait_time_config['category_selection'] / 1000)  # Wait for category to load
+					
+					screenshot_path = f"/tmp/naver_test/after_{category}_category_click.png"
+					screenshot_b64 = await self.take_screenshot(full_page=False)
+					
+					import base64
+					import os
+					os.makedirs("/tmp/naver_test", exist_ok=True)
+					with open(screenshot_path, "wb") as f:
+						f.write(base64.b64decode(screenshot_b64))
+					logger.info(f"Saved screenshot to {screenshot_path}")
+				else:
+					logger.warning(f"Could not find category '{category}', trying to continue...")
+			
+			# Try to find the photos frame
+			logger.info("Looking for photos frame...")
+			photos_frame = await self.find_naver_maps_photos_frame()
+			
+			if photos_frame:
+				logger.info(f"Found photos frame: {photos_frame.get('url')}")
+				frame_path = photos_frame.get('found_path', [])
+				
+				# Try to find a photo element in the photos frame
+				photo_selector = "img[src*='pstatic.net'], img[src*='photo'], img[width]:not([width='0'])"
+				logger.info(f"Looking for photo with selector '{photo_selector}' in frame path {frame_path}")
+				photo = await self.get_element_in_nested_frame(photo_selector, frame_path)
+				
+				if photo:
+					logger.info("Found photo, clicking it...")
+					await photo.click()
+					await asyncio.sleep(wait_time_config['photo_click'] / 1000)  # Wait after clicking photo
+					
+					screenshot_path = "/tmp/naver_test/after_photo_click.png"
+					screenshot_b64 = await self.take_screenshot(full_page=False)
+					
+					import base64
+					import os
+					os.makedirs("/tmp/naver_test", exist_ok=True)
+					with open(screenshot_path, "wb") as f:
+						f.write(base64.b64decode(screenshot_b64))
+					logger.info(f"Saved screenshot to {screenshot_path}")
+					
+					return True
+				else:
+					logger.warning(f"Could not find photo with selector '{photo_selector}' in frame path {frame_path}")
+			else:
+				logger.warning("Could not find photos frame, trying JavaScript approach...")
+			
+			logger.info("Trying JavaScript approach to find and click photos...")
+			
+			result = await self.execute_javascript("""
+				() => {
+					try {
+						console.log("Searching for photos via JavaScript...");
+						// Look for visible images that are likely photos (not icons)
+						const allImages = document.querySelectorAll('img');
+						console.log(`Found ${allImages.length} total images`);
+						
+						const photos = Array.from(allImages).filter(img => {
+							const isVisible = img.offsetWidth > 100 && img.offsetHeight > 100;
+							const isNotIcon = !img.src.includes('icon') && !img.src.includes('logo') && !img.src.includes('map.pstatic.net');
+							console.log(`Image: ${img.src}, width: ${img.offsetWidth}, height: ${img.offsetHeight}, isVisible: ${isVisible}, isNotIcon: ${isNotIcon}`);
+							return isVisible && isNotIcon;
+						});
+						
+						console.log(`Found ${photos.length} photos after filtering`);
+						
+						if (photos.length === 0) {
+							// Try a more lenient approach - any visible image
+							const visibleImages = Array.from(allImages).filter(img => 
+								img.offsetWidth > 50 && img.offsetHeight > 50
+							);
+							
+							console.log(`Found ${visibleImages.length} visible images with relaxed criteria`);
+							
+							if (visibleImages.length > 0) {
+								console.log(`Clicking first visible image: ${visibleImages[0].src}`);
+								visibleImages[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+								setTimeout(() => visibleImages[0].click(), 500);
+								return { 
+									success: true, 
+									message: 'Clicked visible image via JavaScript (relaxed criteria)',
+									photoInfo: {
+										src: visibleImages[0].src,
+										width: visibleImages[0].offsetWidth,
+										height: visibleImages[0].offsetHeight
+									}
+								};
+							}
+							
+							return { success: false, error: 'No photos or visible images found' };
+						}
+						
+						// Click the first photo
+						console.log(`Clicking first photo: ${photos[0].src}`);
+						photos[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+						setTimeout(() => photos[0].click(), 500);
+						
+						return { 
+							success: true, 
+							message: 'Clicked photo via JavaScript',
+							photoInfo: {
+								src: photos[0].src,
+								width: photos[0].offsetWidth,
+								height: photos[0].offsetHeight
+							}
+						};
+					} catch (error) {
+						console.error("Error in JavaScript photo finder:", error);
+						return { success: false, error: error.toString() };
+					}
+				}
+			""")
+			
+			if result and result.get('success', False):
+				logger.info(f"Successfully clicked photo via JavaScript: {result.get('photoInfo', {})}")
+				await asyncio.sleep(wait_time_config['photo_click'] / 1000)  # Wait after clicking photo
+				
+				screenshot_path = "/tmp/naver_test/after_js_photo_click.png"
+				screenshot_b64 = await self.take_screenshot(full_page=False)
+				
+				import base64
+				import os
+				os.makedirs("/tmp/naver_test", exist_ok=True)
+				with open(screenshot_path, "wb") as f:
+					f.write(base64.b64decode(screenshot_b64))
+				logger.info(f"Saved screenshot to {screenshot_path}")
+				
+				return True
+			else:
+				logger.warning(f"JavaScript approach failed: {result.get('error', 'Unknown error')}")
+				
+			logger.warning("Failed to find and click any photos")
+			return False
+			
+		except Exception as e:
+			logger.error(f"Error finding and clicking photo: {str(e)}")
+			import traceback
+			logger.error(traceback.format_exc())
+			return False
