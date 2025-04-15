@@ -43,11 +43,10 @@ async def test_react_event_simulation():
     except Exception as e:
         logger.warning(f"Could not detect CDP port: {e}")
     
-    browser_kwargs = {}
     if cdp_port:
-        browser_kwargs["cdp_url"] = f"http://localhost:{cdp_port}"
+        config.cdp_url = f"http://localhost:{cdp_port}"
         
-    browser = Browser(config, **browser_kwargs)
+    browser = Browser(config)
     
     try:
         async with await browser.new_context() as context:
