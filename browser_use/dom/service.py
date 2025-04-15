@@ -46,22 +46,78 @@ class DomService:
 		return DOMState(element_tree=element_tree, selector_map=selector_map)
 
 	@time_execution_async('--get_cross_origin_iframes')
-	async def get_cross_origin_iframes(self) -> list[str]:
-		# invisible cross-origin iframes are used for ads and tracking, dont open those
-		hidden_frame_urls = await self.page.locator('iframe').filter(visible=False).evaluate_all('e => e.map(e => e.src)')
-
-		is_ad_url = lambda url: any(
-			domain in urlparse(url).netloc for domain in ('doubleclick.net', 'adroll.com', 'googletagmanager.com')
+	async def get_cross_origin_iframes(self, include_details: bool = False) -> list[dict] | list[str]:
+		"""
+		Get cross-origin iframes from the page, with optional detailed information.
+		
+		Args:
+			include_details (bool): Whether to include detailed information about each iframe.
+				If True, returns a list of dictionaries with iframe details.
+				If False, returns a list of iframe URLs (for backward compatibility).
+				
+		Returns:
+			list[dict] | list[str]: List of iframe information or URLs.
+		"""
+		try:
+			hidden_frame_urls = await self.page.locator('iframe').filter(visible=False).evaluate_all('e => e.map(e => e.src)')
+		except Exception as e:
+			logger.warning(f"Error getting hidden frame URLs: {str(e)}")
+			hidden_frame_urls = []
+			
+		ad_tracking_domains = (
+			'doubleclick.net', 'adroll.com', 'googletagmanager.com', 'googlesyndication.com',
+			'moatads.com', 'serving-sys.com', 'criteo.com', 'adnxs.com', 'rubiconproject.com'
 		)
-
-		return [
-			frame.url
-			for frame in self.page.frames
-			if urlparse(frame.url).netloc  # exclude data:urls and about:blank
-			and urlparse(frame.url).netloc != urlparse(self.page.url).netloc  # exclude same-origin iframes
-			and frame.url not in hidden_frame_urls  # exclude hidden frames
-			and not is_ad_url(frame.url)  # exclude most common ad network tracker frame URLs
-		]
+		
+		is_ad_url = lambda url: any(
+			domain in urlparse(url).netloc for domain in ad_tracking_domains
+		)
+		
+		# Process frames with detailed information
+		result = []
+		
+		for frame in self.page.frames:
+			if not frame.url or not urlparse(frame.url).netloc:
+				continue
+				
+			if urlparse(frame.url).netloc == urlparse(self.page.url).netloc:
+				continue
+				
+			# Skip hidden frames
+			if frame.url in hidden_frame_urls:
+				continue
+				
+			if is_ad_url(frame.url):
+				continue
+				
+			if include_details:
+				parent_name = None
+				parent_url = None
+				try:
+					if frame.parent_frame:
+						parent_name = frame.parent_frame.name
+						parent_url = frame.parent_frame.url
+				except Exception as e:
+					logger.debug(f"Error getting parent frame info: {str(e)}")
+					
+				frame_info = {
+					'url': frame.url,
+					'name': frame.name,
+					'parent_name': parent_name,
+					'parent_url': parent_url,
+					'is_detached': False
+				}
+				
+				try:
+					await frame.evaluate('1+1')
+				except Exception:
+					frame_info['is_detached'] = True
+					
+				result.append(frame_info)
+			else:
+				result.append(frame.url)
+				
+		return result
 
 	@time_execution_async('--build_dom_tree')
 	async def _build_dom_tree(

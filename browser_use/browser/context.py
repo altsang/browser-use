@@ -1244,12 +1244,34 @@ class BrowserContext:
 
 		# Process all iframe parents in sequence
 		iframes = [item for item in parents if item.tag_name == 'iframe']
+		
+		iframe_depth = 0
+		max_iframe_depth = 10  # Prevent infinite recursion with deeply nested iframes
+		
 		for parent in iframes:
+			if iframe_depth >= max_iframe_depth:
+				logger.warning(f"Maximum iframe nesting depth ({max_iframe_depth}) reached, stopping traversal")
+				break
+				
 			css_selector = self._enhanced_css_selector_for_element(
 				parent,
 				include_dynamic_attributes=self.config.include_dynamic_attributes,
 			)
-			current_frame = current_frame.frame_locator(css_selector)
+			
+			try:
+				# Handle different frame types appropriately
+				if isinstance(current_frame, FrameLocator):
+					current_frame = current_frame.frame_locator(css_selector)
+				elif hasattr(current_frame, 'frame_locator'):
+					current_frame = current_frame.frame_locator(css_selector)
+				else:
+					logger.warning(f"Unable to traverse into iframe at depth {iframe_depth}: unsupported frame type")
+					break
+					
+				iframe_depth += 1
+			except Exception as e:
+				logger.warning(f"Error traversing into iframe at depth {iframe_depth}: {str(e)}")
+				break
 
 		css_selector = self._enhanced_css_selector_for_element(
 			element, include_dynamic_attributes=self.config.include_dynamic_attributes
@@ -1257,15 +1279,18 @@ class BrowserContext:
 
 		try:
 			if isinstance(current_frame, FrameLocator):
-				element_handle = await current_frame.locator(css_selector).element_handle()
+				element_handle = await current_frame.locator(css_selector).element_handle(timeout=5000)
 				return element_handle
 			else:
 				# Try to scroll into view if hidden
 				element_handle = await current_frame.query_selector(css_selector)
 				if element_handle:
-					is_hidden = await element_handle.is_hidden()
-					if not is_hidden:
-						await element_handle.scroll_into_view_if_needed()
+					try:
+						is_hidden = await element_handle.is_hidden()
+						if not is_hidden:
+							await element_handle.scroll_into_view_if_needed()
+					except Exception as e:
+						logger.warning(f"Could not check visibility or scroll element into view: {str(e)}")
 					return element_handle
 				return None
 		except Exception as e:
@@ -1687,3 +1712,243 @@ class BrowserContext:
 		"""
 		page = await self.get_current_page()
 		await page.wait_for_selector(selector, state='visible', timeout=timeout)
+		
+	@time_execution_async('--get_nested_frames')
+	async def get_nested_frames(self, page: Page = None) -> list[dict]:
+		"""
+		Recursively get all frames in the current page, including nested frames.
+		Returns a list of frame information with their nesting structure.
+		
+		Args:
+		    page (Page, optional): The page to get frames from. Defaults to the current page.
+		    
+		Returns:
+		    list[dict]: A list of frame information dictionaries with nesting structure.
+		"""
+		if page is None:
+			page = await self.get_current_page()
+		
+		result = []
+		
+		async def process_frame(frame, depth=0, path=None):
+			if path is None:
+				path = []
+				
+			if not frame.url or frame.url == 'about:blank' or not frame.url.startswith('http'):
+				return None
+				
+			frame_info = {
+				'url': frame.url,
+				'name': frame.name,
+				'depth': depth,
+				'path': path.copy(),
+				'child_frames': []
+			}
+			
+			try:
+				child_frames = frame.child_frames
+				for i, child_frame in enumerate(child_frames):
+					child_path = path.copy()
+					child_path.append(i)  # Use index for path to ensure consistent navigation
+					child_info = await process_frame(child_frame, depth + 1, child_path)
+					if child_info:
+						frame_info['child_frames'].append(child_info)
+			except Exception as e:
+				logger.warning(f"Error accessing child frames: {str(e)}")
+				
+			return frame_info
+			
+		main_frame_info = await process_frame(page.main_frame)
+		if main_frame_info:
+			result.append(main_frame_info)
+			
+		return result
+		
+	@time_execution_async('--get_element_in_nested_frame')
+	async def get_element_in_nested_frame(self, selector: str, frame_path: Optional[list[int]] = None) -> Optional[ElementHandle]:
+		"""
+		Locate an element in a nested frame using a frame path.
+		The frame_path is a list of indices representing the path to the target frame.
+		For example, [0, 2, 1] means: first child frame of the main frame, 
+		then its third child frame, then its second child frame.
+		
+		Args:
+		    selector (str): The selector to use for finding the element.
+		    frame_path (list[int], optional): The path to the frame containing the element.
+		        If None, searches in the main frame.
+		        
+		Returns:
+		    Optional[ElementHandle]: The element handle if found, None otherwise.
+		"""
+		page = await self.get_current_page()
+		
+		if frame_path is None or not frame_path:
+			return await page.query_selector(selector)
+			
+		try:
+			# Start with main frame
+			current_frame = page.main_frame
+			
+			for idx in frame_path:
+				if idx < 0 or idx >= len(current_frame.child_frames):
+					logger.error(f"Invalid frame index {idx} in path {frame_path}")
+					return None
+					
+				current_frame = current_frame.child_frames[idx]
+				
+			element = await current_frame.query_selector(selector)
+			if element:
+				try:
+					is_hidden = await element.is_hidden()
+					if not is_hidden:
+						await element.scroll_into_view_if_needed()
+				except Exception as e:
+					logger.warning(f"Could not check visibility or scroll element into view: {str(e)}")
+					
+			return element
+		except Exception as e:
+			logger.error(f"Failed to locate element in nested frame: {str(e)}")
+			return None
+			
+	@time_execution_async('--find_frame_by_url_pattern')
+	async def find_frame_by_url_pattern(self, url_pattern: str) -> Optional[dict]:
+		"""
+		Find a frame that matches the given URL pattern.
+		Returns the frame information including its path for accessing it.
+		Specifically designed for finding frames in complex structures like Naver Maps.
+		
+		Args:
+		    url_pattern (str): Regular expression pattern to match against frame URLs.
+		    
+		Returns:
+		    Optional[dict]: Frame information with added 'found_path' if found, None otherwise.
+		"""
+		import re
+		frames = await self.get_nested_frames()
+		
+		def search_frames(frames_list, pattern, path=None):
+			if path is None:
+				path = []
+				
+			for i, frame in enumerate(frames_list):
+				# Check if this frame matches the pattern
+				if re.search(pattern, frame['url']):
+					frame['found_path'] = path + [i]
+					return frame
+					
+				current_path = path + [i]
+				for j, child_frame in enumerate(frame.get('child_frames', [])):
+					result = search_frames([child_frame], pattern, current_path)
+					if result:
+						return result
+						
+			return None
+			
+		return search_frames(frames, url_pattern)
+		
+	@time_execution_async('--find_naver_maps_photos_frame')
+	async def find_naver_maps_photos_frame(self) -> Optional[dict]:
+		"""
+		Specifically designed to find the photos iframe in Naver Maps restaurant listings.
+		Returns the frame information if found.
+		
+		This method avoids the pcmap.place.naver.com frame as mentioned in the requirements
+		and focuses on finding the frame that contains the photo gallery.
+		
+		Returns:
+		    Optional[dict]: Frame information with path if found, None otherwise.
+		"""
+		import re
+		page = await self.get_current_page()
+		if not re.search(r'map\.naver\.com', page.url):
+			logger.warning("Not on a Naver Maps page")
+			return None
+			
+		# Try to find the photos frame - avoid the pcmap.place.naver.com frame
+		
+		photo_frame = await self.find_frame_by_url_pattern(r'photo.*\.naver\.com')
+		if photo_frame:
+			return photo_frame
+			
+		frames = await self.get_nested_frames()
+		
+		def search_for_photo_frame(frames_list, path=None):
+			if path is None:
+				path = []
+				
+			for i, frame in enumerate(frames_list):
+				current_path = path + [i]
+				
+				if re.search(r'pcmap\.place\.naver\.com', frame['url']):
+					continue
+					
+				if (re.search(r'place.*\.naver\.com', frame['url']) or 
+					re.search(r'map.*\.naver\.com', frame['url'])):
+					# Check if this frame has Korean text that might indicate photos
+					if frame.get('hasKoreanText'):
+						frame['found_path'] = current_path
+						return frame
+						
+				for j, child_frame in enumerate(frame.get('child_frames', [])):
+					result = search_for_photo_frame([child_frame], current_path)
+					if result:
+						return result
+						
+			return None
+			
+		return search_for_photo_frame(frames)
+	@time_execution_async('--find_element_by_korean_text')
+	async def find_element_by_korean_text(self, text: str, frame_path: Optional[list[int]] = None) -> Optional[ElementHandle]:
+		"""
+		Find an element by Korean text in a specific frame.
+		Useful for navigating Naver Maps UI which uses Korean text as stable identifiers
+		rather than DOM IDs which change dynamically as an anti-bot measure.
+		
+		Args:
+		    text (str): The Korean text to search for
+		    frame_path (list[int], optional): The path to the frame to search in.
+		        If None, searches in the main frame.
+		        
+		Returns:
+		    Optional[ElementHandle]: The element handle if found, None otherwise.
+		"""
+		page = await self.get_current_page()
+		
+		selector = f'text="{text}"'
+		
+		if frame_path is None or not frame_path:
+			# Search in main frame
+			try:
+				element = await page.query_selector(selector)
+				if element:
+					try:
+						await element.scroll_into_view_if_needed()
+					except Exception as e:
+						logger.warning(f"Could not scroll element into view: {str(e)}")
+				return element
+			except Exception as e:
+				logger.error(f"Failed to locate element by Korean text in main frame: {str(e)}")
+				return None
+		
+		try:
+			# Start with main frame
+			current_frame = page.main_frame
+			
+			for idx in frame_path:
+				if idx < 0 or idx >= len(current_frame.child_frames):
+					logger.error(f"Invalid frame index {idx} in path {frame_path}")
+					return None
+					
+				current_frame = current_frame.child_frames[idx]
+				
+			element = await current_frame.query_selector(selector)
+			if element:
+				try:
+					await element.scroll_into_view_if_needed()
+				except Exception as e:
+					logger.warning(f"Could not scroll element into view: {str(e)}")
+					
+			return element
+		except Exception as e:
+			logger.error(f"Failed to locate element by Korean text: {str(e)}")
+			return None
