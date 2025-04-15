@@ -4,8 +4,9 @@ Utility functions for browser-use.
 import asyncio
 import functools
 import logging
+import os
 import time
-from typing import Any, Callable, TypeVar, Awaitable, Type, cast
+from typing import Any, Callable, TypeVar, Awaitable, Type, cast, List
 
 logger = logging.getLogger(__name__)
 
@@ -79,3 +80,16 @@ def singleton(cls: Type[T]) -> Type[T]:
         return cast(T, instances[cls])
     
     return cast(Type[T], get_instance)
+
+def check_env_variables(keys: List[str], any_or_all=all) -> bool:
+    """
+    Check if required environment variables are set.
+    
+    Args:
+        keys: List of environment variable names to check.
+        any_or_all: Function to use for checking (all or any).
+        
+    Returns:
+        bool: True if the required environment variables are set, False otherwise.
+    """
+    return any_or_all(os.getenv(key) and os.getenv(key).strip() for key in keys)
