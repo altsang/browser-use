@@ -8,6 +8,8 @@ import os
 import time
 from typing import Any, Callable, TypeVar, Awaitable, Type, cast, List
 
+from browser_use.utils.signal_handler import SignalHandler
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
