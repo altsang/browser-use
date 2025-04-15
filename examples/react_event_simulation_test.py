@@ -211,7 +211,10 @@ async def test_react_event_simulation():
             state = await context.get_state(cache_clickable_elements_hashes=True)
             
             button_element = None
-            for element in state.element_tree:
+            
+            elements = state.element_tree.get_all_elements()
+            
+            for element in elements:
                 if element.tag_name == 'button' and element.id == 'increment-button':
                     button_element = element
                     logger.info(f"Found button element in DOM tree: {element.tag_name} (id={element.id})")
