@@ -5,7 +5,7 @@ import asyncio
 import functools
 import logging
 import time
-from typing import Any, Callable, TypeVar, Awaitable
+from typing import Any, Callable, TypeVar, Awaitable, Type, cast
 
 logger = logging.getLogger(__name__)
 
@@ -59,3 +59,23 @@ def time_execution_async(name: str) -> Callable[[Callable[..., Awaitable[R]]], C
                 logger.debug(f"{name} took {duration:.4f} seconds")
         return wrapper
     return decorator
+
+def singleton(cls: Type[T]) -> Type[T]:
+    """
+    Decorator to create a singleton class.
+    
+    Args:
+        cls: The class to make a singleton.
+        
+    Returns:
+        The singleton class.
+    """
+    instances = {}
+    
+    @functools.wraps(cls)
+    def get_instance(*args: Any, **kwargs: Any) -> T:
+        if cls not in instances:
+            instances[cls] = cls(*args, **kwargs)
+        return cast(T, instances[cls])
+    
+    return cast(Type[T], get_instance)
