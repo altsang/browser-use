@@ -827,10 +827,7 @@ class BrowserContext:
 			Any: The result of the JavaScript execution
 		"""
 		page = await self.get_current_page()
-		if args:
-			return await page.evaluate(script, args)
-		else:
-			return await page.evaluate(script)
+		return await page.evaluate(script, *args)
 	@time_execution_async('--evaluate_element_javascript')
 	async def evaluate_element_javascript(self, element_node: DOMElementNode, script: str, *args):
 		"""
@@ -846,7 +843,7 @@ class BrowserContext:
 		"""
 		element_handle = await self.get_locate_element(element_node)
 		if element_handle is None:
-			raise Exception(f'Element: {repr(element_node)} not found')
+			raise Exception(f'Element not found')
 			
 		return await element_handle.evaluate(script, *args)
 
@@ -1743,7 +1740,7 @@ class BrowserContext:
 		"""
 		page = await self.get_current_page()
 		await page.wait_for_selector(selector, state='visible', timeout=timeout)
-	async def wait_for_function(self, expression: str, timeout: float = 30000, polling: str = 'raf', *args):
+	async def wait_for_function(self, expression: str, timeout: float = 30000, polling: str = 'raf', args=None):
 		"""
 		Waits for a JavaScript function to return true.
 		
@@ -1751,7 +1748,7 @@ class BrowserContext:
 			expression (str): JavaScript function or expression to be evaluated in browser context
 			timeout (float): Maximum time to wait in milliseconds
 			polling (str): Polling method, 'raf' for requestAnimationFrame or 'mutation' for MutationObserver
-			*args: Arguments to pass to the function
+			args: Arguments to pass to the function
 			
 		Returns:
 			JSHandle: A handle to the successful result of the function
@@ -1760,7 +1757,10 @@ class BrowserContext:
 			TimeoutError: If the function doesn't return true within the timeout
 		"""
 		page = await self.get_current_page()
-		return await page.wait_for_function(expression, timeout=timeout, polling=polling, *args)
+		kwargs = {'timeout': timeout, 'polling': polling}
+		if args is not None:
+			kwargs['args'] = args
+		return await page.wait_for_function(expression, **kwargs)
 
 		
 	@time_execution_async('--get_nested_frames')
