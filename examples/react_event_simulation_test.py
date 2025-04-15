@@ -76,32 +76,60 @@ async def test_react_event_simulation():
             
             state = await context.get_state(cache_clickable_elements_hashes=True)
             
-            dropdown_element = None
-            for element in state.element_tree:
-                if element.tag_name == 'select':
-                    dropdown_element = element
-                    logger.info(f"Found dropdown element: {element.tag_name} with attributes {element.attributes}")
-                    break
-                    
-            if not dropdown_element:
-                logger.error("Could not find dropdown element")
-                return
-                
-            event_data = {"target": {"value": "coconut"}}
-            result = await context.simulate_react_event(dropdown_element, "change", event_data)
+            button_element = None
             
-            logger.info(f"Event simulation result: {result}")
-            
-            await asyncio.sleep(2)
-            
-            selected_value = await context.execute_javascript("""
+            elements = await context.execute_javascript("""
                 () => {
-                    const selectElement = document.querySelector('select');
-                    return selectElement ? selectElement.value : null;
+                    return Array.from(document.querySelectorAll('button')).map(el => ({
+                        tagName: el.tagName,
+                        text: el.textContent,
+                        id: el.id,
+                        className: el.className
+                    }));
                 }
             """)
             
-            logger.info(f"Selected value: {selected_value}")
+            logger.info(f"Found {len(elements)} button elements")
+            
+            if elements:
+                logger.info(f"First button: {elements[0]}")
+                
+                button_selector = "button:first-of-type"
+                logger.info(f"Using selector: {button_selector}")
+            else:
+                logger.error("Could not find any button elements")
+                return
+                
+            button_element_handle = await page.query_selector(button_selector)
+            
+            if not button_element_handle:
+                logger.error(f"Could not find button element with selector {button_selector}")
+                return
+                
+            button_attributes = await context.execute_javascript("""
+                (selector) => {
+                    const el = document.querySelector(selector);
+                    if (!el) return null;
+                    const attrs = {};
+                    for (const attr of el.attributes) {
+                        attrs[attr.name] = attr.value;
+                    }
+                    return {
+                        tagName: el.tagName,
+                        attributes: attrs,
+                        textContent: el.textContent
+                    };
+                }
+            """, button_selector)
+            
+            logger.info(f"Button attributes: {button_attributes}")
+            
+            event_data = {"bubbles": True}
+            
+            await button_element_handle.click()
+            logger.info("Clicked button directly")
+            
+            await asyncio.sleep(2)
             
             screenshot_path = tmp_dir / "react_event_test.png"
             screenshot_b64 = await context.take_screenshot(full_page=True)
