@@ -61,7 +61,26 @@ async def test_react_event_simulation():
             
             page = await context.get_current_page()
             
-            logger.info("Using main page for React testing")
+            logger.info("Looking for CodePen result iframe")
+            
+            await context.wait_for_function(
+                "() => document.querySelector('#result-iframe') !== null",
+                10000
+            )
+            
+            iframe_element = await page.query_selector("#result-iframe")
+            if not iframe_element:
+                logger.error("Could not find CodePen result iframe")
+                return
+                
+            content_frame = await iframe_element.content_frame()
+            if not content_frame:
+                logger.error("Could not access iframe content")
+                return
+                
+            logger.info("Using CodePen iframe for React testing")
+            
+            page = content_frame
                 
             react_info = await detect_react_app(page)
             
