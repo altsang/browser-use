@@ -22,10 +22,13 @@ async def test_react_event_simulation():
     config = BrowserConfig(
         headless=False,
         slow_mo=50,
-        context_config=BrowserContextConfig(
-            ignore_https_errors=True,
-        )
     )
+    
+    context_config = BrowserContextConfig(
+        ignore_https_errors=True,
+        trace_path=None
+    )
+    config.new_context_config = context_config
     
     cdp_port = None
     try:
