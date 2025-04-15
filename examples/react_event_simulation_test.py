@@ -131,9 +131,11 @@ async def test_react_event_simulation():
                         );
                     };
                     
-                    // Render the Counter component
-                    const root = ReactDOM.createRoot(document.getElementById('root'));
-                    root.render(React.createElement(Counter));
+                    // Render the Counter component using older React API
+                    ReactDOM.render(
+                        React.createElement(Counter),
+                        document.getElementById('root')
+                    );
                 }
             """)
             
