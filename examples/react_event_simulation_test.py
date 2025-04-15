@@ -52,7 +52,7 @@ async def test_react_event_simulation():
     browser = Browser(config)
     
     try:
-        async with await browser.new_context() as context:
+        async with await browser.new_context(config=context_config) as context:
             url = "https://codepen.io/gaearon/pen/WZpxpz"
             await context.navigate_to(url)
             logger.info(f"Navigated to {url}")
