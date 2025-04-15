@@ -20,8 +20,8 @@ NAVER_MAPS_SELECTORS = {
     'previous_button': '이전',  # "Previous" button
     
     'main_frame_pattern': r'map\.naver\.com',
-    'photo_frame_pattern': r'place.*\.naver\.com',
-    'avoid_frame_pattern': r'pcmap\.place\.naver\.com',
+    'photo_frame_pattern': r'(place|pcmap\.place)\.naver\.com',
+    'content_frame_pattern': r'pcmap\.place\.naver\.com',
 }
 
 def is_naver_maps_url(url: str) -> bool:
@@ -34,7 +34,7 @@ def is_naver_maps_url(url: str) -> bool:
     Returns:
         bool: True if the URL is a Naver Maps URL, False otherwise
     """
-    return bool(re.search(r'map\.naver\.com', url))
+    return bool(re.search(r'(map\.naver\.com|pcmap\.place\.naver\.com)', url, re.IGNORECASE))
 
 def is_restaurant_page(url: str) -> bool:
     """
@@ -46,7 +46,7 @@ def is_restaurant_page(url: str) -> bool:
     Returns:
         bool: True if the URL is a Naver Maps restaurant page, False otherwise
     """
-    return bool(re.search(r'map\.naver\.com/p/.*?/(place|restaurant|food)', url))
+    return bool(re.search(r'(map\.naver\.com/p/.*?/(place|restaurant|food)|pcmap\.place\.naver\.com/restaurant/\d+)', url, re.IGNORECASE))
 
 def extract_restaurant_id(url: str) -> Optional[str]:
     """
@@ -61,6 +61,11 @@ def extract_restaurant_id(url: str) -> Optional[str]:
     match = re.search(r'place/(\d+)', url)
     if match:
         return match.group(1)
+    
+    match = re.search(r'restaurant/(\d+)', url)
+    if match:
+        return match.group(1)
+        
     return None
 
 def get_photo_selector(category: Optional[str] = None) -> str:
@@ -122,7 +127,7 @@ def get_frame_patterns() -> Dict[str, str]:
     return {
         'main': NAVER_MAPS_SELECTORS['main_frame_pattern'],
         'photo': NAVER_MAPS_SELECTORS['photo_frame_pattern'],
-        'avoid': NAVER_MAPS_SELECTORS['avoid_frame_pattern'],
+        'content': NAVER_MAPS_SELECTORS['content_frame_pattern'],
     }
 
 def parse_photo_count(text: str) -> int:
@@ -160,8 +165,10 @@ def wait_times() -> Dict[str, int]:
         Dict[str, int]: A dictionary of operation names and recommended wait times in milliseconds
     """
     return {
-        'frame_load': 2000,  # Wait time for frame to load
-        'category_selection': 1000,  # Wait time after selecting a category
-        'photo_navigation': 500,  # Wait time between photo navigation actions
-        'initial_load': 5000,  # Wait time for initial page load
+        'frame_load': 5000,  # Wait time for frame to load
+        'category_selection': 2000,  # Wait time after selecting a category
+        'photo_navigation': 1000,  # Wait time between photo navigation actions
+        'initial_load': 10000,  # Wait time for initial page load
+        'photos_tab_click': 3000,  # Wait time after clicking photos tab
+        'photo_click': 2000,  # Wait time after clicking a photo
     }

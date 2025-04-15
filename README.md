@@ -117,6 +117,36 @@ https://github.com/user-attachments/assets/de73ee39-432c-4b97-b4e8-939fd7f323b3
 
 For more examples see the [examples](examples) folder or join the [Discord](https://link.browser-use.com/discord) and show off your project.
 
+## Testing with Naver Maps
+
+### Agent-Based Testing
+
+For testing with Naver Maps, the recommended approach is to use the Agent model pattern:
+
+```python
+import asyncio
+from langchain_openai import ChatOpenAI
+from browser_use import Agent
+
+async def main():
+    llm = ChatOpenAI(model='gpt-4o', temperature=0.0)
+    
+    task = '''
+    Navigate to Naver Maps restaurant page and:
+    1. Find the photos section
+    2. Click on a photo
+    3. Verify the category frame is visible
+    '''
+    
+    agent = Agent(task=task, llm=llm)
+    await agent.run()
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+This approach lets the agent handle iframe navigation and JavaScript execution without directly manipulating the interface.
+
 # Vision
 
 Tell your computer what to do, and it gets it done.
