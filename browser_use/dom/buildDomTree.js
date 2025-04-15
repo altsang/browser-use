@@ -1021,6 +1021,61 @@
 
     return false; // Did not highlight
   }
+  
+  /**
+   * Helper function to check iframe depth to prevent infinite recursion
+   * @param {HTMLIFrameElement} iframe - The iframe element
+   * @param {HTMLIFrameElement} parentFrame - The parent iframe element
+   * @returns {number} - The depth of the iframe
+   */
+  function getIframeDepth(iframe, parentFrame) {
+    let depth = 0;
+    let current = parentFrame;
+    
+    while (current) {
+      depth++;
+      current = current.parentIframe || null;
+    }
+    
+    return depth;
+  }
+  
+  /**
+   * Helper function to detect Korean text in a document
+   * Useful for Naver Maps and other Korean websites
+   * @param {Document} doc - The document to check for Korean text
+   * @returns {boolean} - Whether Korean text was found
+   */
+  function checkForKoreanText(doc) {
+    try {
+      const koreanTextRegex = /[\uAC00-\uD7AF]/;
+      const textNodes = [];
+      
+      // Simple text node collector
+      function collectTextNodes(node) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          textNodes.push(node);
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          for (const child of node.childNodes) {
+            collectTextNodes(child);
+          }
+        }
+      }
+      
+      const visibleElements = doc.querySelectorAll('body *');
+      for (const el of visibleElements) {
+        if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+          collectTextNodes(el);
+        }
+      }
+      
+      // Check if any text node contains Korean characters
+      return textNodes.some(node => koreanTextRegex.test(node.textContent));
+    } catch (e) {
+      console.warn("Error checking for Korean text:", e);
+      return false;
+    }
+  }
 
   /**
    * Creates a node data object for a given node and its descendants.
@@ -1150,18 +1205,48 @@
     if (node.tagName) {
       const tagName = node.tagName.toLowerCase();
 
-      // Handle iframes
+      // Handle iframes with recursive traversal and depth limiting
       if (tagName === "iframe") {
+        // Track iframe depth to prevent infinite recursion
+        const MAX_IFRAME_DEPTH = 10;
+        const currentDepth = getIframeDepth(node, parentIframe);
+        
+        nodeData.isIframe = true;
+        nodeData.iframeSrc = node.src || '';
+        nodeData.iframeDepth = currentDepth;
+        
+        // Check if we've reached the maximum depth
+        if (currentDepth >= MAX_IFRAME_DEPTH) {
+          console.warn(`Maximum iframe depth (${MAX_IFRAME_DEPTH}) reached, stopping traversal`);
+          nodeData.maxDepthReached = true;
+          return nodeData;
+        }
+        
         try {
           const iframeDoc = node.contentDocument || node.contentWindow?.document;
           if (iframeDoc) {
+            // Check for Korean text in iframe (useful for Naver Maps)
+            try {
+              const hasKoreanText = checkForKoreanText(iframeDoc);
+              if (hasKoreanText) {
+                nodeData.hasKoreanText = true;
+              }
+            } catch (e) {
+              console.warn("Error checking for Korean text:", e);
+            }
+            
+            // Process iframe document
             for (const child of iframeDoc.childNodes) {
               const domElement = buildDomTree(child, node, false);
               if (domElement) nodeData.children.push(domElement);
             }
+          } else {
+            nodeData.isCrossOrigin = true;
           }
         } catch (e) {
-          console.warn("Unable to access iframe:", e);
+          nodeData.isCrossOrigin = true;
+          nodeData.accessError = e.message;
+          console.warn(`Unable to access iframe (likely cross-origin): ${e.message}`);
         }
       }
       // Handle rich text editors and contenteditable elements
