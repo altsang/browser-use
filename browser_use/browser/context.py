@@ -827,7 +827,10 @@ class BrowserContext:
 			Any: The result of the JavaScript execution
 		"""
 		page = await self.get_current_page()
-		return await page.evaluate(script, *args)
+		if args:
+			return await page.evaluate(script, args)
+		else:
+			return await page.evaluate(script)
 	@time_execution_async('--evaluate_element_javascript')
 	async def evaluate_element_javascript(self, element_node: DOMElementNode, script: str, *args):
 		"""
