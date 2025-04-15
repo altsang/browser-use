@@ -24,6 +24,13 @@ from browser_use.utils.naver_maps import (
     parse_photo_count,
     wait_times,
 )
+from browser_use.utils.react import (
+    REACT_EVENT_MAPPING,
+    detect_react_app,
+    get_react_component_props,
+    get_react_event_name,
+    find_react_components,
+)
 
 __all__ = [
 	'Agent',
@@ -46,4 +53,9 @@ __all__ = [
 	'get_frame_patterns',
 	'parse_photo_count',
 	'wait_times',
+	'REACT_EVENT_MAPPING',
+	'detect_react_app',
+	'get_react_component_props',
+	'get_react_event_name',
+	'find_react_components',
 ]

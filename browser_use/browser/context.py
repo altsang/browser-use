@@ -815,10 +815,38 @@ class BrowserContext:
 		page = await self.get_current_page()
 		return await page.content()
 
-	async def execute_javascript(self, script: str):
-		"""Execute JavaScript code on the page"""
+	async def execute_javascript(self, script: str, *args):
+		"""
+		Execute JavaScript code on the page with optional arguments.
+		
+		Args:
+			script (str): The JavaScript code to execute
+			*args: Arguments to pass to the JavaScript function
+			
+		Returns:
+			Any: The result of the JavaScript execution
+		"""
 		page = await self.get_current_page()
-		return await page.evaluate(script)
+		return await page.evaluate(script, *args)
+	@time_execution_async('--evaluate_element_javascript')
+	async def evaluate_element_javascript(self, element_node: DOMElementNode, script: str, *args):
+		"""
+		Execute JavaScript on a specific DOM element.
+		
+		Args:
+			element_node (DOMElementNode): The element to execute JavaScript on
+			script (str): The JavaScript code to execute
+			*args: Arguments to pass to the JavaScript function
+			
+		Returns:
+			Any: The result of the JavaScript execution
+		"""
+		element_handle = await self.get_locate_element(element_node)
+		if element_handle is None:
+			raise Exception(f'Element: {repr(element_node)} not found')
+			
+		return await element_handle.evaluate(script, *args)
+
 
 	async def get_page_structure(self) -> str:
 		"""Get a debug view of the page structure including iframes"""
@@ -1712,6 +1740,25 @@ class BrowserContext:
 		"""
 		page = await self.get_current_page()
 		await page.wait_for_selector(selector, state='visible', timeout=timeout)
+	async def wait_for_function(self, expression: str, timeout: float = 30000, polling: str = 'raf', *args):
+		"""
+		Waits for a JavaScript function to return true.
+		
+		Args:
+			expression (str): JavaScript function or expression to be evaluated in browser context
+			timeout (float): Maximum time to wait in milliseconds
+			polling (str): Polling method, 'raf' for requestAnimationFrame or 'mutation' for MutationObserver
+			*args: Arguments to pass to the function
+			
+		Returns:
+			JSHandle: A handle to the successful result of the function
+			
+		Raises:
+			TimeoutError: If the function doesn't return true within the timeout
+		"""
+		page = await self.get_current_page()
+		return await page.wait_for_function(expression, timeout=timeout, polling=polling, *args)
+
 		
 	@time_execution_async('--get_nested_frames')
 	async def get_nested_frames(self, page: Page = None) -> list[dict]:
@@ -1952,3 +1999,103 @@ class BrowserContext:
 		except Exception as e:
 			logger.error(f"Failed to locate element by Korean text: {str(e)}")
 			return None
+	@time_execution_async('--simulate_react_event')
+	async def simulate_react_event(self, element_node: DOMElementNode, event_type: str, event_data: dict = None):
+		"""
+		Simulate a React synthetic event on a DOM element.
+		
+		Args:
+			element_node (DOMElementNode): The element to trigger the event on
+			event_type (str): The type of event to simulate (e.g., 'click', 'change', 'focus')
+			event_data (dict, optional): Event data to include in the synthetic event
+			
+		Returns:
+			Any: The result of the event simulation
+		"""
+		if event_data is None:
+			event_data = {}
+			
+		element_handle = await self.get_locate_element(element_node)
+		if element_handle is None:
+			raise Exception(f'Element: {repr(element_node)} not found')
+			
+		page = await self.get_current_page()
+		
+		react_event_script = """
+		(element, eventType, eventData) => {
+			// Find React instance on the element or its parent
+			function findReactInstance(element) {
+				let key;
+				const keys = Object.keys(element);
+				
+				// Find the React Fiber key
+				for (key of keys) {
+					if (key.startsWith('__reactFiber$') || 
+						key.startsWith('__reactInternalInstance$') ||
+						key.startsWith('_reactFiber')) {
+						return element[key];
+					}
+				}
+				
+				// If not found on element, try parent
+				if (element.parentNode) {
+					return findReactInstance(element.parentNode);
+				}
+				
+				return null;
+			}
+			
+			// Create and dispatch a React synthetic event
+			function simulateEvent(element, eventType, eventData) {
+				// For React 16+, we need to access the event system differently
+				const event = new Event(eventType, { bubbles: true, cancelable: true });
+				
+				// Add custom event data
+				Object.assign(event, eventData);
+				
+				// Dispatch the event
+				element.dispatchEvent(event);
+				
+				return true;
+			}
+			
+			return simulateEvent(element, eventType, eventData);
+		}
+		"""
+		
+		return await page.evaluate(react_event_script, element_handle, event_type, event_data)
+	@time_execution_async('--wait_for_javascript_load')
+	async def wait_for_javascript_load(self, timeout: float = 30000):
+		"""
+		Wait for a page to be fully loaded including JavaScript execution.
+		
+		This method waits for the page to reach a ready state where JavaScript
+		initialization is complete, which is more comprehensive than just waiting
+		for the DOM to be loaded.
+		
+		Args:
+			timeout (float): Maximum time to wait in milliseconds
+			
+		Returns:
+			bool: True if the page loaded successfully
+		"""
+		page = await self.get_current_page()
+		
+		try:
+			await page.wait_for_load_state('load')
+		except Exception as e:
+			logger.warning(f"Standard load state wait failed: {str(e)}")
+			return False
+		
+		try:
+			await page.wait_for_function("""
+				() => {
+					return document.readyState === 'complete' && 
+						   !document.querySelector('.loading') && 
+						   window.initialLoadComplete !== false;
+				}
+			""", timeout=timeout)
+			return True
+		except Exception as e:
+			logger.warning(f"JavaScript load wait timed out or failed: {str(e)}")
+			return False

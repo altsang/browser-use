@@ -28,6 +28,7 @@ from browser_use.controller.views import (
 	ScrollAction,
 	SearchGoogleAction,
 	SendKeysAction,
+	SimulateReactEventAction,
 	SwitchTabAction,
 )
 from browser_use.utils import time_execution_sync
@@ -726,6 +727,37 @@ class Controller(Generic[Context]):
 			except Exception as e:
 				error_msg = f'Failed to perform drag and drop: {str(e)}'
 				logger.error(error_msg)
+		@self.registry.action(
+			description='Simulate a React event on an element',
+			param_model=SimulateReactEventAction,
+		)
+		async def simulate_react_event(params: SimulateReactEventAction, browser: BrowserContext):
+			selector_map = await browser.get_selector_map()
+			
+			if params.index not in selector_map:
+				raise Exception(f'Element with index {params.index} does not exist - retry or use alternative actions')
+			
+			dom_element = await browser.get_dom_element_by_index(params.index)
+			
+			try:
+				event_data = params.event_data or {}
+				result = await browser.simulate_react_event(dom_element, params.event_type, event_data)
+				
+				msg = f'📱 Simulated React {params.event_type} event on element {params.index}'
+				
+				if result:
+					logger.info(msg)
+					return ActionResult(extracted_content=msg, include_in_memory=True)
+				else:
+					error_msg = f'Failed to simulate React {params.event_type} event on element {params.index}'
+					logger.error(error_msg)
+					return ActionResult(error=error_msg, include_in_memory=True)
+					
+			except Exception as e:
+				error_msg = f'Error simulating React event: {str(e)}'
+				logger.error(error_msg)
+				return ActionResult(error=error_msg, include_in_memory=True)
+
 				return ActionResult(error=error_msg, include_in_memory=True)
 
 	# Register ---------------------------------------------------------------

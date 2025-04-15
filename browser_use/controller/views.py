@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -104,3 +104,9 @@ class DragDropAction(BaseModel):
 	# Common options
 	steps: Optional[int] = Field(10, description='Number of intermediate points for smoother movement (5-20 recommended)')
 	delay_ms: Optional[int] = Field(5, description='Delay in milliseconds between steps (0 for fastest, 10-20 for more natural)')
+
+class SimulateReactEventAction(BaseModel):
+	"""Model for simulating React events on elements"""
+	index: int = Field(..., description="Index of the element to trigger the event on")
+	event_type: str = Field(..., description="Type of event to simulate (e.g., 'click', 'change', 'focus')")
+	event_data: Optional[Dict[str, Any]] = Field(None, description="Optional event data to include in the synthetic event")
