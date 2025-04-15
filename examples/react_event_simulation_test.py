@@ -78,16 +78,15 @@ async def test_react_event_simulation():
             
             button_element = None
             
-            elements = await context.execute_javascript("""
-                () => {
-                    return Array.from(document.querySelectorAll('button')).map(el => ({
-                        tagName: el.tagName,
-                        text: el.textContent,
-                        id: el.id,
-                        className: el.className
-                    }));
-                }
-            """)
+            elements = await context.execute_javascript(
+                "(selector) => Array.from(document.querySelectorAll(selector)).map(el => ({" +
+                "    tagName: el.tagName," +
+                "    text: el.textContent," +
+                "    id: el.id," +
+                "    className: el.className" +
+                "}))",
+                "button"
+            )
             
             logger.info(f"Found {len(elements)} button elements")
             
@@ -106,21 +105,22 @@ async def test_react_event_simulation():
                 logger.error(f"Could not find button element with selector {button_selector}")
                 return
                 
-            button_attributes = await context.execute_javascript("""
-                (selector) => {
-                    const el = document.querySelector(selector);
-                    if (!el) return null;
-                    const attrs = {};
-                    for (const attr of el.attributes) {
-                        attrs[attr.name] = attr.value;
-                    }
-                    return {
-                        tagName: el.tagName,
-                        attributes: attrs,
-                        textContent: el.textContent
-                    };
-                }
-            """, button_selector)
+            button_attributes = await context.execute_javascript(
+                "(selector) => {" +
+                "    const el = document.querySelector(selector);" +
+                "    if (!el) return null;" +
+                "    const attrs = {};" +
+                "    for (const attr of el.attributes) {" +
+                "        attrs[attr.name] = attr.value;" +
+                "    }" +
+                "    return {" +
+                "        tagName: el.tagName," +
+                "        attributes: attrs," +
+                "        textContent: el.textContent" +
+                "    };" +
+                "}",
+                button_selector
+            )
             
             logger.info(f"Button attributes: {button_attributes}")
             
