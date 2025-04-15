@@ -54,7 +54,7 @@ async def test_javascript_execution():
             await context.navigate_to(url)
             logger.info(f"Navigated to {url}")
             
-            result = await context.execute_javascript("(a, b) => a + b", 5, 7)
+            result = await context.execute_javascript("(args) => args[0] + args[1]", 5, 7)
             
             logger.info(f"JavaScript execution result (5 + 7): {result}")
             assert result == 12, "JavaScript execution failed"
