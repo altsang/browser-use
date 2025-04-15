@@ -53,7 +53,7 @@ async def test_react_event_simulation():
     
     try:
         async with await browser.new_context(config=context_config) as context:
-            url = "https://reactjs.org/tutorial/tutorial.html"
+            url = "https://codepen.io/gaearon/pen/gWWZgR?editors=0010"
             await context.navigate_to(url)
             logger.info(f"Navigated to {url}")
             
@@ -93,7 +93,7 @@ async def test_react_event_simulation():
             if elements:
                 logger.info(f"First button: {elements[0]}")
                 
-                button_selector = "button:first-of-type"
+                button_selector = ".square"
                 logger.info(f"Using selector: {button_selector}")
             else:
                 logger.error("Could not find any button elements")
