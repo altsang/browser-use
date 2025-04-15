@@ -53,25 +53,15 @@ async def test_react_event_simulation():
     
     try:
         async with await browser.new_context(config=context_config) as context:
-            url = "https://codepen.io/shyam-king/pen/ByBJoOv"
+            url = "https://reactjs.org/tutorial/tutorial.html"
             await context.navigate_to(url)
             logger.info(f"Navigated to {url}")
             
             await context.wait_for_javascript_load()
             
             page = await context.get_current_page()
-            frames = await context.get_nested_frames()
             
-            result_frame = None
-            for frame in frames:
-                if frame.get('name') == 'CodePen Preview':
-                    result_frame = frame
-                    logger.info(f"Found CodePen Preview frame: {frame['url']}")
-                    break
-            
-            if not result_frame:
-                logger.error("Could not find CodePen Preview frame")
-                return
+            logger.info("Using main page for React testing")
                 
             react_info = await detect_react_app(page)
             
