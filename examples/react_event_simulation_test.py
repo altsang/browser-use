@@ -53,35 +53,93 @@ async def test_react_event_simulation():
     
     try:
         async with await browser.new_context(config=context_config) as context:
-            url = "https://codepen.io/gaearon/pen/gWWZgR?editors=0010"
-            await context.navigate_to(url)
-            logger.info(f"Navigated to {url}")
+            logger.info("Creating a simple React app for testing")
             
-            await context.wait_for_javascript_load()
+            await context.navigate_to("about:blank")
             
             page = await context.get_current_page()
             
-            logger.info("Looking for CodePen result iframe")
+            await context.execute_javascript("""
+                () => {
+                    // Add React and ReactDOM scripts
+                    const reactScript = document.createElement('script');
+                    reactScript.src = 'https://unpkg.com/react@18/umd/react.development.js';
+                    document.head.appendChild(reactScript);
+                    
+                    const reactDomScript = document.createElement('script');
+                    reactDomScript.src = 'https://unpkg.com/react-dom@18/umd/react-dom.development.js';
+                    document.head.appendChild(reactDomScript);
+                    
+                    // Add a container for the React app
+                    const container = document.createElement('div');
+                    container.id = 'root';
+                    document.body.appendChild(container);
+                    
+                    // Add some basic styling
+                    const style = document.createElement('style');
+                    style.textContent = `
+                        body { font-family: Arial, sans-serif; padding: 20px; }
+                        button { padding: 10px 15px; margin: 10px; cursor: pointer; }
+                        .counter { font-size: 24px; margin: 20px 0; }
+                        .clicked { background-color: #4CAF50; color: white; }
+                    `;
+                    document.head.appendChild(style);
+                }
+            """)
             
-            await context.wait_for_function(
-                "() => document.querySelector('#result-iframe') !== null",
-                10000
-            )
+            logger.info("Waiting for React scripts to load")
+            await asyncio.sleep(2)
             
-            iframe_element = await page.query_selector("#result-iframe")
-            if not iframe_element:
-                logger.error("Could not find CodePen result iframe")
-                return
-                
-            content_frame = await iframe_element.content_frame()
-            if not content_frame:
-                logger.error("Could not access iframe content")
-                return
-                
-            logger.info("Using CodePen iframe for React testing")
+            await context.execute_javascript("""
+                () => {
+                    // Wait for React and ReactDOM to be loaded
+                    if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+                        console.error('React or ReactDOM not loaded yet');
+                        return;
+                    }
+                    
+                    // Create a simple Counter component
+                    const Counter = () => {
+                        const [count, setCount] = React.useState(0);
+                        const [buttonClicked, setButtonClicked] = React.useState(false);
+                        
+                        const handleClick = () => {
+                            setCount(count + 1);
+                            setButtonClicked(true);
+                            setTimeout(() => setButtonClicked(false), 500);
+                        };
+                        
+                        return React.createElement(
+                            'div',
+                            null,
+                            React.createElement('h1', null, 'React Counter Example'),
+                            React.createElement(
+                                'div',
+                                { className: 'counter' },
+                                'Count: ',
+                                count
+                            ),
+                            React.createElement(
+                                'button',
+                                { 
+                                    onClick: handleClick,
+                                    className: buttonClicked ? 'clicked' : '',
+                                    id: 'increment-button'
+                                },
+                                'Increment'
+                            )
+                        );
+                    };
+                    
+                    // Render the Counter component
+                    const root = ReactDOM.createRoot(document.getElementById('root'));
+                    root.render(React.createElement(Counter));
+                }
+            """)
             
-            page = content_frame
-                
+            logger.info("Waiting for React app to render")
+            await asyncio.sleep(2)
+            
             react_info = await detect_react_app(page)
             
             if react_info.get("isReactApp"):
@@ -90,34 +148,19 @@ async def test_react_event_simulation():
             else:
                 logger.warning("Not a React application or React not detected")
             
+            # Find React components
             components = await find_react_components(page)
             logger.info(f"Found {len(components)} React components")
             
-            state = await context.get_state(cache_clickable_elements_hashes=True)
+            screenshot_path = tmp_dir / "react_event_test_before.png"
+            screenshot_b64 = await context.take_screenshot(full_page=False)
             
-            button_element = None
+            import base64
+            with open(screenshot_path, "wb") as f:
+                f.write(base64.b64decode(screenshot_b64))
+            logger.info(f"Saved screenshot to {screenshot_path}")
             
-            elements = await context.execute_javascript(
-                "(selector) => Array.from(document.querySelectorAll(selector)).map(el => ({" +
-                "    tagName: el.tagName," +
-                "    text: el.textContent," +
-                "    id: el.id," +
-                "    className: el.className" +
-                "}))",
-                "button"
-            )
-            
-            logger.info(f"Found {len(elements)} button elements")
-            
-            if elements:
-                logger.info(f"First button: {elements[0]}")
-                
-                button_selector = ".square"
-                logger.info(f"Using selector: {button_selector}")
-            else:
-                logger.error("Could not find any button elements")
-                return
-                
+            button_selector = "#increment-button"
             button_element_handle = await page.query_selector(button_selector)
             
             if not button_element_handle:
@@ -143,41 +186,68 @@ async def test_react_event_simulation():
             
             logger.info(f"Button attributes: {button_attributes}")
             
-            event_data = {"bubbles": True}
+            count_before = await context.execute_javascript(
+                "() => document.querySelector('.counter').textContent"
+            )
+            logger.info(f"Count before click: {count_before}")
             
             await button_element_handle.click()
-            logger.info("Clicked button directly")
+            logger.info("Clicked button directly with Playwright")
             
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
             
-            screenshot_path = tmp_dir / "react_event_test.png"
-            screenshot_b64 = await context.take_screenshot(full_page=True)
+            count_after_playwright = await context.execute_javascript(
+                "() => document.querySelector('.counter').textContent"
+            )
+            logger.info(f"Count after Playwright click: {count_after_playwright}")
             
-            import base64
+            screenshot_path = tmp_dir / "react_event_test_after_playwright.png"
+            screenshot_b64 = await context.take_screenshot(full_page=False)
+            
             with open(screenshot_path, "wb") as f:
                 f.write(base64.b64decode(screenshot_b64))
             logger.info(f"Saved screenshot to {screenshot_path}")
             
+            state = await context.get_state(cache_clickable_elements_hashes=True)
+            
             button_element = None
             for element in state.element_tree:
-                if element.tag_name == 'button':
+                if element.tag_name == 'button' and element.id == 'increment-button':
                     button_element = element
-                    logger.info(f"Found button element: {element.tag_name}")
+                    logger.info(f"Found button element in DOM tree: {element.tag_name} (id={element.id})")
                     break
-                    
-            if button_element:
-                result = await context.simulate_react_event(button_element, "click")
-                logger.info(f"Button click result: {result}")
-                await asyncio.sleep(2)
-                
-                screenshot_path = tmp_dir / "react_event_test_after_click.png"
-                screenshot_b64 = await context.take_screenshot(full_page=True)
-                
-                with open(screenshot_path, "wb") as f:
-                    f.write(base64.b64decode(screenshot_b64))
-                logger.info(f"Saved screenshot to {screenshot_path}")
             
-            await asyncio.sleep(3)
+            if not button_element:
+                logger.error("Could not find button element in DOM tree")
+                return
+            
+            event_data = {"bubbles": True}
+            result = await context.simulate_react_event(button_element, "click", event_data)
+            logger.info(f"React event simulation result: {result}")
+            
+            await asyncio.sleep(1)
+            
+            count_after_react = await context.execute_javascript(
+                "() => document.querySelector('.counter').textContent"
+            )
+            logger.info(f"Count after React event simulation: {count_after_react}")
+            
+            screenshot_path = tmp_dir / "react_event_test_after_react.png"
+            screenshot_b64 = await context.take_screenshot(full_page=False)
+            
+            with open(screenshot_path, "wb") as f:
+                f.write(base64.b64decode(screenshot_b64))
+            logger.info(f"Saved screenshot to {screenshot_path}")
+            
+            logger.info("Test summary:")
+            logger.info(f"  - Initial count: {count_before}")
+            logger.info(f"  - Count after Playwright click: {count_after_playwright}")
+            logger.info(f"  - Count after React event simulation: {count_after_react}")
+            
+            if "Count: 1" in count_after_playwright and "Count: 2" in count_after_react:
+                logger.info("✅ Test PASSED: Both click methods successfully incremented the counter")
+            else:
+                logger.error("❌ Test FAILED: Counter did not increment as expected")
             
     finally:
         await browser.close()
