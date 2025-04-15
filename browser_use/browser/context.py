@@ -815,10 +815,19 @@ class BrowserContext:
 		page = await self.get_current_page()
 		return await page.content()
 
-	async def execute_javascript(self, script: str):
-		"""Execute JavaScript code on the page"""
+	async def execute_javascript(self, script: str, *args):
+		"""
+		Execute JavaScript code on the page with optional arguments
+		
+		Args:
+			script (str): JavaScript code to execute
+			*args: Optional arguments to pass to the JavaScript function
+			
+		Returns:
+			The result of the JavaScript execution
+		"""
 		page = await self.get_current_page()
-		return await page.evaluate(script)
+		return await page.evaluate(script, *args)
 
 	async def get_page_structure(self) -> str:
 		"""Get a debug view of the page structure including iframes"""
@@ -1007,25 +1016,28 @@ class BrowserContext:
 
 	# region - Browser Actions
 	@time_execution_async('--take_screenshot')
-	async def take_screenshot(self, full_page: bool = False) -> str:
+	async def take_screenshot(self, full_page: bool = False, path: str = None) -> str:
 		"""
 		Returns a base64 encoded screenshot of the current page.
+		If path is provided, saves the screenshot to the specified path.
 		"""
 		page = await self.get_current_page()
 
 		await page.bring_to_front()
 		await page.wait_for_load_state()
 
-		screenshot = await page.screenshot(
-			full_page=full_page,
-			animations='disabled',
-		)
-
-		screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
-
-		# await self.remove_highlights()
-
-		return screenshot_b64
+		screenshot_options = {
+			'full_page': full_page,
+			'animations': 'disabled',
+		}
+		
+		if path:
+			await page.screenshot(path=path, **screenshot_options)
+			return f"Screenshot saved to {path}"
+		else:
+			screenshot = await page.screenshot(**screenshot_options)
+			screenshot_b64 = base64.b64encode(screenshot).decode('utf-8')
+			return screenshot_b64
 
 	@time_execution_async('--remove_highlights')
 	async def remove_highlights(self):
@@ -1374,6 +1386,67 @@ class BrowserContext:
 		except Exception as e:
 			logger.error(f"❌  Failed to locate element by text '{text}': {str(e)}")
 			return None
+			
+	@time_execution_async('--click_element_by_text')
+	async def click_element_by_text(
+		self, text: str, nth: Optional[int] = 0, element_type: Optional[str] = None
+	) -> bool:
+		"""
+		Clicks an element on the page using the provided text.
+		If `nth` is provided, it clicks the nth matching element (0-based).
+		If `element_type` is provided, filters by tag name (e.g., 'button', 'span').
+		
+		Returns:
+			bool: True if the element was found and clicked, False otherwise.
+		"""
+		element_handle = await self.get_locate_element_by_text(text, nth, element_type)
+		if element_handle:
+			try:
+				await element_handle.click()
+				logger.info(f"Clicked element with text '{text}'")
+				return True
+			except Exception as e:
+				logger.error(f"❌  Failed to click element with text '{text}': {str(e)}")
+				return False
+		return False
+		
+	@time_execution_async('--click_element')
+	async def click_element(
+		self, selector: str, nth: Optional[int] = 0
+	) -> bool:
+		"""
+		Clicks an element on the page using the provided CSS selector.
+		If `nth` is provided, it clicks the nth matching element (0-based).
+		
+		Returns:
+			bool: True if the element was found and clicked, False otherwise.
+		"""
+		current_frame = await self.get_current_page()
+		try:
+			elements = await current_frame.query_selector_all(selector)
+			# considering only visible elements
+			elements = [el for el in elements if await el.is_visible()]
+			
+			if not elements:
+				logger.error(f"No visible element with selector '{selector}' found.")
+				return False
+				
+			if nth is not None:
+				if 0 <= nth < len(elements):
+					element_handle = elements[nth]
+				else:
+					logger.error(f"Visible element with selector '{selector}' not found at index {nth}.")
+					return False
+			else:
+				element_handle = elements[0]
+				
+			await element_handle.scroll_into_view_if_needed()
+			await element_handle.click()
+			logger.info(f"Clicked element with selector '{selector}'")
+			return True
+		except Exception as e:
+			logger.error(f"❌  Failed to click element with selector '{selector}': {str(e)}")
+			return False
 
 	@time_execution_async('--input_text_element_node')
 	async def _input_text_element_node(self, element_node: DOMElementNode, text: str):
