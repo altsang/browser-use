@@ -74,7 +74,7 @@ async def test_react_event_simulation():
             components = await find_react_components(page)
             logger.info(f"Found {len(components)} React components")
             
-            state = await context.get_state()
+            state = await context.get_state(cache_clickable_elements_hashes=True)
             
             dropdown_element = None
             for element in state.element_tree:
