@@ -45,7 +45,7 @@ async def test_react_event_simulation():
     
     browser_kwargs = {}
     if cdp_port:
-        browser_kwargs["cdp_port"] = int(cdp_port)
+        browser_kwargs["cdp_url"] = f"http://localhost:{cdp_port}"
         
     browser = Browser(config, **browser_kwargs)
     
