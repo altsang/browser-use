@@ -81,8 +81,11 @@ async def test_naver_maps_iframe_support():
                 
                 if photos_button:
                     logger.info("Found 'Photos' button!")
-                    await photos_button.click()
-                    logger.info("Clicked on 'Photos' button")
+                    action_result = await context.perform_action("click_element", {
+                        "element": photos_button,
+                        "frame_path": photos_frame.get('found_path')
+                    })
+                    logger.info(f"Clicked on 'Photos' button: {action_result.success}")
                     
                     await asyncio.sleep(wait_times()['frame_load'] / 1000)
                     
@@ -93,17 +96,16 @@ async def test_naver_maps_iframe_support():
                     
                     if interior_button:
                         logger.info("Found 'Interior' category button!")
-                        await interior_button.click()
-                        logger.info("Clicked on 'Interior' category button")
+                        action_result = await context.perform_action("click_element", {
+                            "element": interior_button,
+                            "frame_path": photos_frame.get('found_path')
+                        })
+                        logger.info(f"Clicked on 'Interior' category button: {action_result.success}")
                         
                         await asyncio.sleep(wait_times()['category_selection'] / 1000)
                         
                         screenshot_path = tmp_dir / "naver_maps_interior_photos.png"
-                        screenshot_b64 = await context.take_screenshot(full_page=True)
-                        
-                        import base64
-                        with open(screenshot_path, "wb") as f:
-                            f.write(base64.b64decode(screenshot_b64))
+                        await context.take_screenshot(path=str(screenshot_path))
                         logger.info(f"Saved screenshot to {screenshot_path}")
                     else:
                         logger.warning("Could not find 'Interior' category button")
