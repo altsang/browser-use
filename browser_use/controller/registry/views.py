@@ -23,12 +23,29 @@ class RegisteredAction(BaseModel):
 		skip_keys = ['title']
 		s = f'{self.description}: \n'
 		s += '{' + str(self.name) + ': '
-		s += str(
-			{
-				k: {sub_k: sub_v for sub_k, sub_v in v.items() if sub_k not in skip_keys}
-				for k, v in self.param_model.model_json_schema()['properties'].items()
-			}
-		)
+		
+		try:
+			schema = self.param_model.model_json_schema()
+			properties = schema.get('properties', {})
+			
+			s += str(
+				{
+					k: {sub_k: sub_v for sub_k, sub_v in v.items() if sub_k not in skip_keys}
+					for k, v in properties.items()
+				}
+			)
+		except Exception as e:
+			import logging
+			logging.getLogger(__name__).warning(f"Schema generation error in prompt_description: {str(e)}")
+			
+			s += str(
+				{
+					field_name: {"type": "string", "description": "Parameter description unavailable"}
+					for field_name in getattr(self.param_model, "__annotations__", {}).keys()
+					if field_name != "__root__"
+				}
+			)
+		
 		s += '}'
 		return s
 

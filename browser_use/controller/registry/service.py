@@ -209,14 +209,21 @@ class Registry(Generic[Context]):
 			for name, action in available_actions.items()
 		}
 
-		self.telemetry.capture(
-			ControllerRegisteredFunctionsTelemetryEvent(
-				registered_functions=[
-					RegisteredFunction(name=name, params=action.param_model.model_json_schema())
-					for name, action in available_actions.items()
-				]
+		from browser_use.controller.registry.fix_schema import safe_model_json_schema
+		
+		try:
+			self.telemetry.capture(
+				ControllerRegisteredFunctionsTelemetryEvent(
+					registered_functions=[
+						RegisteredFunction(name=name, params=safe_model_json_schema(action.param_model))
+						for name, action in available_actions.items()
+					]
+				)
 			)
-		)
+		except Exception as e:
+			import logging
+			logging.getLogger(__name__).warning(f"Failed to capture telemetry: {str(e)}")
+
 
 		return create_model('ActionModel', __base__=ActionModel, **fields)  # type:ignore
 

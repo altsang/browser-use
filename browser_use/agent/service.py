@@ -337,14 +337,24 @@ class Agent(Generic[Context]):
 
 	def _setup_action_models(self) -> None:
 		"""Setup dynamic action models from controller's registry"""
-		# Initially only include actions with no filters
-		self.ActionModel = self.controller.registry.create_action_model()
-		# Create output model with the dynamic actions
-		self.AgentOutput = AgentOutput.type_with_custom_actions(self.ActionModel)
+		try:
+			from browser_use.controller.registry.fix_schema import safe_model_json_schema
+			
+			# Initially only include actions with no filters
+			self.ActionModel = self.controller.registry.create_action_model()
+			# Create output model with the dynamic actions
+			self.AgentOutput = AgentOutput.type_with_custom_actions(self.ActionModel)
 
-		# used to force the done action when max_steps is reached
-		self.DoneActionModel = self.controller.registry.create_action_model(include_actions=['done'])
-		self.DoneAgentOutput = AgentOutput.type_with_custom_actions(self.DoneActionModel)
+			# used to force the done action when max_steps is reached
+			self.DoneActionModel = self.controller.registry.create_action_model(include_actions=['done'])
+			self.DoneAgentOutput = AgentOutput.type_with_custom_actions(self.DoneActionModel)
+		except Exception as e:
+			logger.warning(f"Error setting up action models: {str(e)}")
+			from pydantic import create_model
+			self.ActionModel = create_model('ActionModel', __base__=ActionModel)
+			self.AgentOutput = AgentOutput
+			self.DoneActionModel = self.ActionModel
+			self.DoneAgentOutput = self.AgentOutput
 
 	def _set_tool_calling_method(self) -> Optional[ToolCallingMethod]:
 		tool_calling_method = self.settings.tool_calling_method

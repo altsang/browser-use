@@ -728,6 +728,111 @@ class Controller(Generic[Context]):
 				logger.error(error_msg)
 				return ActionResult(error=error_msg, include_in_memory=True)
 
+		@self.registry.action(
+			description='Execute JavaScript code on the current page with arguments',
+		)
+		async def execute_javascript(script: str, *args, browser: BrowserContext):
+			"""
+			Execute JavaScript code on the current page.
+			
+			Args:
+				script (str): The JavaScript code to execute
+				*args: Optional arguments to pass to the JavaScript code
+			
+			Returns:
+				The result of the JavaScript execution
+			"""
+			try:
+				result = await browser.execute_javascript(script, *args)
+				msg = f'📝 Executed JavaScript code'
+				
+				if result is not None:
+					msg += f' with result: {result}'
+				
+				logger.info(msg)
+				return ActionResult(extracted_content=msg, include_in_memory=True)
+			except Exception as e:
+				error_msg = f'Error executing JavaScript: {str(e)}'
+				logger.error(error_msg)
+				return ActionResult(error=error_msg, include_in_memory=True)
+
+		@self.registry.action(
+			description='Get nested frames in the current page',
+		)
+		async def get_nested_frames(browser: BrowserContext):
+			"""
+			Get all frames in the current page, including nested frames.
+			
+			Returns:
+				A list of frame information with their nesting structure
+			"""
+			try:
+				frames = await browser.get_nested_frames()
+				frame_urls = [f["url"] for f in frames]
+				msg = f'📋 Found {len(frames)} frames: {frame_urls}'
+				logger.info(msg)
+				return ActionResult(extracted_content=msg, include_in_memory=True)
+			except Exception as e:
+				error_msg = f'Error getting nested frames: {str(e)}'
+				logger.error(error_msg)
+				return ActionResult(error=error_msg, include_in_memory=True)
+		
+		@self.registry.action(
+			description='Find a frame by URL pattern',
+		)
+		async def find_frame_by_url_pattern(url_pattern: str, browser: BrowserContext):
+			"""
+			Find a frame that matches the given URL pattern.
+			
+			Args:
+				url_pattern (str): Regular expression pattern to match frame URLs
+				
+			Returns:
+				Frame information including its path for accessing it
+			"""
+			try:
+				frame = await browser.find_frame_by_url_pattern(url_pattern)
+				
+				if frame:
+					msg = f'🔍 Found frame matching "{url_pattern}": {frame.get("url")}'
+					logger.info(msg)
+					return ActionResult(extracted_content=msg, include_in_memory=True)
+				else:
+					msg = f'❌ No frame found matching "{url_pattern}"'
+					logger.info(msg)
+					return ActionResult(extracted_content=msg, include_in_memory=True)
+			except Exception as e:
+				error_msg = f'Error finding frame by URL pattern: {str(e)}'
+				logger.error(error_msg)
+				return ActionResult(error=error_msg, include_in_memory=True)
+
+		@self.registry.action(
+			description='Find Naver Maps photos frame',
+			domains=['map.naver.com', 'pcmap.place.naver.com'],
+		)
+		async def find_naver_maps_photos_frame(browser: BrowserContext):
+			"""
+			Find the photos frame in a Naver Maps restaurant page.
+			
+			Returns:
+				Frame information for the photos frame
+			"""
+			try:
+				frame = await browser.find_naver_maps_photos_frame()
+				
+				if frame:
+					msg = f'🔍 Found Naver Maps photos frame: {frame.get("url")}'
+					logger.info(msg)
+					return ActionResult(extracted_content=msg, include_in_memory=True)
+				else:
+					msg = '❌ No Naver Maps photos frame found'
+					logger.info(msg)
+					return ActionResult(extracted_content=msg, include_in_memory=True)
+			except Exception as e:
+				error_msg = f'Error finding Naver Maps photos frame: {str(e)}'
+				logger.error(error_msg)
+				return ActionResult(error=error_msg, include_in_memory=True)
+
 	# Register ---------------------------------------------------------------
 
 	def action(self, description: str, **kwargs):
