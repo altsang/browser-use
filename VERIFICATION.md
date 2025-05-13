@@ -32,11 +32,16 @@
 - Azure OpenAI deployment issue:
   - While the credentials are available, the specific model deployment ("gpt-4") does not exist
   - This is a configuration issue with the Azure OpenAI service
+  - The issue persists even with direnv and explicit environment configuration
 
 ## Test Results
 - Attempted to test the standee detection tool with the Naver news website
-- Test failed due to Azure OpenAI deployment configuration issues
-- See [standee_detection_test_results.md](./standee_detection_test_results.md) for details
+- Initial test failed due to Azure OpenAI deployment configuration issues
+- Rerun test with direnv and updated Azure OpenAI configuration:
+  - Environment variables were correctly set (endpoint, API version, deployment, key)
+  - Test still failed with "DeploymentNotFound" error
+  - This confirms the deployment doesn't exist in the Azure OpenAI service
+- See [test_results_analysis.md](./test_results_analysis.md) for detailed analysis
 
 ## Verification Status
 - ✅ Playwright capabilities retained
