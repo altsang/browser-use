@@ -13,7 +13,12 @@ import logging
 import argparse
 
 from dotenv import load_dotenv
+try:
+    from langchain_ollama import ChatOllama
+except ImportError:
+    from langchain_community.chat_models import ChatOllama
 from langchain_openai import ChatOpenAI, AzureChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import SecretStr
 
 from browser_use import Agent
@@ -169,6 +174,25 @@ def create_llm(args):
             azure_endpoint=os.environ.get("AZURE_OPENAI_ENDPOINT"),
             api_key=SecretStr(os.environ.get("AZURE_OPENAI_KEY", "")),
         )
+    elif args.use_ollama:
+        logger.info("Using Ollama with model: %s", args.model)
+        return ChatOllama(
+            model=args.model,
+            temperature=0.0,
+            base_url="http://localhost:11434",
+        )
+    elif args.use_gemini:
+        if not os.environ.get("GEMINI_API_KEY"):
+            logger.error("Missing GEMINI_API_KEY environment variable")
+            logger.error("Please set this variable in your environment or .env file")
+            sys.exit(1)
+            
+        logger.info("Using Gemini with model: %s", args.model)
+        return ChatGoogleGenerativeAI(
+            model=args.model,
+            temperature=0.0,
+            api_key=SecretStr(os.environ.get("GEMINI_API_KEY", "")),
+        )
     else:
         if not os.environ.get("OPENAI_API_KEY"):
             logger.error("Missing OPENAI_API_KEY environment variable")
@@ -195,6 +219,8 @@ async def main():
     
     parser.add_argument('--model', type=str, default='gpt-4o', help='Model to use (default: gpt-4o)')
     parser.add_argument('--use-azure', action='store_true', help='Use Azure OpenAI instead of OpenAI')
+    parser.add_argument('--use-ollama', action='store_true', help='Use Ollama instead of OpenAI/Azure OpenAI')
+    parser.add_argument('--use-gemini', action='store_true', help='Use Google Gemini instead of OpenAI')
     parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     parser.add_argument('--auth', action='store_true', help='Authenticate with Naver before running the agent')
     parser.add_argument('--screenshots', action='store_true', help='Take screenshots during navigation')
