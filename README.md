@@ -108,17 +108,20 @@ NOVITA_API_KEY=
 The library supports command-line flags for flexible configuration:
 
 ```bash
-# Basic usage
-python examples/advance.py
+# Restaurant standee detection
+python examples/use-cases/restaurant_standee_detection.py
 
 # With command-line flags
-python examples/advance.py --cdp-port 9222 --no-headless --model gpt-4o --task "Your custom task"
+python examples/use-cases/restaurant_standee_detection.py --cdp-port 9222 --no-headless --model gpt-4o --task "Your custom task"
 
 # Using Azure OpenAI
-python examples/advance.py --use-azure --model gpt-4o
+python examples/use-cases/restaurant_standee_detection.py --use-azure --model gpt-4o
 
 # With screenshots enabled
-python examples/advance.py --screenshots --no-headless --advanced-mode
+python examples/use-cases/restaurant_standee_detection.py --screenshots --no-headless --advanced-mode
+
+# Bulk restaurant image collection
+python examples/use-cases/bulk_restaurant_image_scraper.py --max-restaurants 50 --auth
 ```
 
 Available flags:
@@ -135,10 +138,10 @@ Available flags:
 
 Example scripts support various command-line arguments:
 
-#### advance.py
+#### restaurant_standee_detection.py
 
 ```bash
-python examples/advance.py [options]
+python examples/use-cases/restaurant_standee_detection.py [options]
 ```
 
 Options:
@@ -152,19 +155,19 @@ Options:
 
 Example with all options:
 ```bash
-python examples/advance.py --no-headless --advanced-mode --use-azure --model gpt-4o --cdp-port 9222 --screenshots --debug
+python examples/use-cases/restaurant_standee_detection.py --no-headless --advanced-mode --use-azure --model gpt-4o --cdp-port 9222 --screenshots --debug
 ```
 
 ### Screenshot Functionality
 
 The browser-use library provides screenshot capabilities in two ways:
 - **Base64 encoded screenshots**: The BrowserContext.take_screenshot() method returns a base64 encoded screenshot (doesn't save to file)
-- **File-based screenshots**: Example scripts like advance.py include custom functions to save screenshots to files
+- **File-based screenshots**: Example scripts like restaurant_standee_detection.py include custom functions to save screenshots to files
 
-**Important**: Screenshots are not saved to files by default. When running examples that support screenshots (like advance.py), you must explicitly enable screenshots with the `--screenshots` flag:
+**Important**: Screenshots are not saved to files by default. When running examples that support screenshots (like restaurant_standee_detection.py), you must explicitly enable screenshots with the `--screenshots` flag:
 
 ```bash
-python examples/advance.py --screenshots --no-headless --advanced-mode
+python examples/use-cases/restaurant_standee_detection.py --screenshots --no-headless --advanced-mode
 ```
 
 Screenshots will be saved to `~/screenshots/` directory using platform-independent paths. The directory will be created automatically if it doesn't exist on both Linux and macOS systems.
@@ -179,16 +182,16 @@ Note: The screenshot functionality has no dependencies on any specific environme
 CDP_PORT=$(ps -ax | grep -o '\-\-remote-debugging-port=[0-9]\+' | awk -F= '{print $2}' | head -1)
 
 # Run with visible browser window
-python examples/advance.py --no-headless --task "Your custom task"
+python examples/use-cases/restaurant_standee_detection.py --no-headless --task "Your custom task"
 
 # Run with advanced mode and custom model
-python examples/advance.py --no-headless --advanced-mode --model gpt-4o
+python examples/use-cases/restaurant_standee_detection.py --no-headless --advanced-mode --model gpt-4o
 
 # For Naver Maps photo navigation on Mac
-python examples/advance.py --cdp-port $CDP_PORT --no-headless --advanced-mode --model gpt-4o
+python examples/use-cases/restaurant_standee_detection.py --cdp-port $CDP_PORT --no-headless --advanced-mode --model gpt-4o
 
 # With screenshots enabled
-python examples/advance.py --no-headless --advanced-mode --screenshots
+python examples/use-cases/restaurant_standee_detection.py --no-headless --advanced-mode --screenshots
 ```
 
 #### Mac-Specific Screenshot Notes
@@ -205,10 +208,10 @@ When running on macOS:
 CDP_PORT=$(ps aux | grep -o '\-\-remote-debugging-port=[0-9]\+' | awk -F= '{print $2}' | head -1)
 
 # Run with CDP port connection
-python examples/advance.py --cdp-port $CDP_PORT --task "Your custom task"
+python examples/use-cases/restaurant_standee_detection.py --cdp-port $CDP_PORT --task "Your custom task"
 
 # Run with Azure OpenAI
-python examples/advance.py --cdp-port $CDP_PORT --use-azure --model gpt-4o
+python examples/use-cases/restaurant_standee_detection.py --cdp-port $CDP_PORT --use-azure --model gpt-4o
 ```
 
 For other settings, models, and more, check out the [documentation 📕](https://docs.browser-use.com).
@@ -288,7 +291,7 @@ Advanced mode provides enhanced screenshot capabilities:
 screenshot_b64 = await context.take_screenshot(full_page=True)
 
 # In example scripts, enable screenshots with the --screenshots flag
-# python examples/advance.py --screenshots --no-headless --advanced-mode [other options]
+# python examples/use-cases/restaurant_standee_detection.py --screenshots --no-headless --advanced-mode [other options]
 ```
 
 Screenshots will be saved to `~/screenshots/` directory with timestamps and descriptive names. The directory will be created if it doesn't exist.
@@ -461,7 +464,8 @@ Project documentation and architecture diagrams.
 #### `/examples/` - Example Scripts
 Example scripts demonstrating library usage.
 - `simple.py`: Basic usage example
-- `advance.py`: Advanced usage with full Playwright capabilities
+- `restaurant_standee_detection.py`: Advanced restaurant standee detection with full Playwright capabilities
+- `bulk_restaurant_image_scraper.py`: Bulk collection of restaurant images from Naver Maps
 
 #### `/tests/` - Test Suite
 Unit and integration tests.

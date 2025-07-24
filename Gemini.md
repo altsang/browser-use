@@ -72,7 +72,7 @@ The `README.md` provides detailed instructions on how to run the agent. The basi
 1.  Install the dependencies: `pip install browser-use`
 2.  Install `playwright`: `playwright install chromium`
 3.  Set up the `.env` file with API keys.
-4.  Run an example script, e.g., `python examples/advance.py`.
+4.  Run an example script, e.g., `python examples/use-cases/restaurant_standee_detection.py`.
 
 ## My Role
 

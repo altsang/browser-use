@@ -1,3 +1,29 @@
+"""
+Restaurant Standee Detection Script
+
+This script demonstrates automated standee detection in Korean restaurant photos using Naver Maps.
+It navigates to a specific restaurant page, accesses the photo gallery, and uses YOLO-based 
+computer vision to detect standee displays in restaurant exterior photos.
+
+Key Features:
+- Naver Maps navigation with Korean text detection
+- Photo category selection (interior/exterior)  
+- YOLO-based standee detection using trained models
+- Screenshot capture for verification
+- Multi-LLM support (OpenAI, Azure, Gemini, Ollama)
+- Advanced browser automation with CDP support
+
+Use Cases:
+- Restaurant marketing analysis
+- Standee display verification
+- Automated visual content analysis
+- Korean website automation testing
+
+Example Usage:
+    python restaurant_standee_detection.py --no-headless --screenshots --auth
+    python restaurant_standee_detection.py --model gpt-4o --use-azure --debug
+"""
+
 import os
 import sys
 import subprocess

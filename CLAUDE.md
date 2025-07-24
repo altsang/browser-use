@@ -34,11 +34,14 @@ playwright install chromium   # Install browser for testing
 # Basic example
 python examples/simple.py
 
-# Advanced example with command-line options
-python examples/advance.py --no-headless --advanced-mode --model gpt-4o
+# Advanced example with command-line options  
+python examples/use-cases/restaurant_standee_detection.py --no-headless --advanced-mode --model gpt-4o
 
 # With screenshots enabled
-python examples/advance.py --screenshots --no-headless --advanced-mode
+python examples/use-cases/restaurant_standee_detection.py --screenshots --no-headless --advanced-mode
+
+# Bulk restaurant image collection
+python examples/use-cases/bulk_restaurant_image_scraper.py --max-restaurants 50 --interior-limit 10 --exterior-limit 5
 
 # UI/Web interface example
 python examples/ui/gradio_demo.py
